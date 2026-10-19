@@ -10,27 +10,53 @@ use crate::apk::ApkInfo;
 use crate::exec::CmdOutput;
 use crate::gpu::AccelVerdict;
 use crate::privileged::{Escalator, PrivError};
+use crate::tr;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum RuntimeError {
-    #[error("{0} non è installato")]
     NotInstalled(&'static str),
-    #[error("Android non è inizializzato: esegui prima l'inizializzazione delle immagini")]
     NotInitialized,
-    #[error("la sessione Android non è attiva")]
     SessionNotRunning,
-    #[error("input non valido: {0}")]
     InvalidInput(String),
-    #[error("comando `{command}` fallito: {output}")]
     CommandFailed { command: String, output: String },
-    #[error("tempo scaduto: {0}")]
     Timeout(String),
-    #[error("verifica fallita: {0}")]
     Verification(String),
-    #[error(transparent)]
-    Privileged(#[from] PrivError),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Privileged(PrivError),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::NotInstalled(what) => tr!("{what} non è installato", "{what} is not installed"),
+            Self::NotInitialized => tr!(
+                "Android non è inizializzato: esegui prima l'inizializzazione delle immagini",
+                "Android is not initialized: download the images first"
+            ),
+            Self::SessionNotRunning => tr!("la sessione Android non è attiva", "the Android session is not running"),
+            Self::InvalidInput(m) => tr!("input non valido: {m}", "invalid input: {m}"),
+            Self::CommandFailed { command, output } => tr!("comando `{command}` fallito: {output}", "command `{command}` failed: {output}"),
+            Self::Timeout(what) => tr!("tempo scaduto: {what}", "timed out: {what}"),
+            Self::Verification(m) => tr!("verifica fallita: {m}", "verification failed: {m}"),
+            Self::Privileged(e) => e.to_string(),
+            Self::Io(e) => e.to_string(),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for RuntimeError {}
+
+impl From<PrivError> for RuntimeError {
+    fn from(e: PrivError) -> Self {
+        Self::Privileged(e)
+    }
+}
+
+impl From<std::io::Error> for RuntimeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 impl RuntimeError {
@@ -65,6 +91,8 @@ pub struct AndroidApp {
     pub name: String,
     pub package: String,
     pub categories: Vec<String>,
+    /// Launcher icon exported by Waydroid's session (`…/waydroid/data/icons/<package>.png`).
+    pub icon: Option<String>,
 }
 
 /// What Android was configured to use for graphics (not proof of acceleration).
@@ -123,7 +151,7 @@ pub fn validate_package_name(name: &str) -> Result<(), RuntimeError> {
     if ok {
         Ok(())
     } else {
-        Err(RuntimeError::InvalidInput(format!("nome package non valido: {name:?}")))
+        Err(RuntimeError::InvalidInput(tr!("nome package non valido: {name:?}", "invalid package name: {name:?}")))
     }
 }
 
@@ -135,14 +163,15 @@ pub fn validate_prop_key(key: &str) -> Result<(), RuntimeError> {
     if ok {
         Ok(())
     } else {
-        Err(RuntimeError::InvalidInput(format!("chiave di proprietà non valida: {key:?}")))
+        Err(RuntimeError::InvalidInput(tr!("chiave di proprietà non valida: {key:?}", "invalid property key: {key:?}")))
     }
 }
 
 pub fn validate_apk_path(path: &Path) -> Result<std::path::PathBuf, RuntimeError> {
     let canonical = std::fs::canonicalize(path).map_err(|e| RuntimeError::InvalidInput(format!("{}: {e}", path.display())))?;
     if !canonical.is_file() {
-        return Err(RuntimeError::InvalidInput(format!("{} non è un file", canonical.display())));
+        let shown = canonical.display();
+        return Err(RuntimeError::InvalidInput(tr!("{shown} non è un file", "{shown} is not a file")));
     }
     Ok(canonical)
 }

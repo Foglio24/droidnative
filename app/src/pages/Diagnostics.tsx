@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { mdiAndroid, mdiExpansionCardVariant, mdiFileDocumentOutline, mdiRefresh } from "@mdi/js";
 import type { Shared } from "../App";
 import { api, errorText } from "../api";
+import { t } from "../i18n";
 import type { GraphicsConfig } from "../types";
-import { Button, Card, KeyValue, useAction } from "../ui";
+import { Button, Card, IconButton, KeyValue, PageHead, useAction } from "../ui";
 
 export function Diagnostics(p: Shared) {
   const { busy, run } = useAction(p.setNotice);
@@ -26,30 +28,31 @@ export function Diagnostics(p: Shared) {
   const s = p.status;
   return (
     <div className="page">
-      <h1>Diagnostica</h1>
+      <PageHead title={t("diag.title")} />
       <div className="grid2">
-        <Card title="Runtime">
+        <Card title={t("diag.runtime")} icon={mdiAndroid}>
           {p.statusError ? (
             <p className="muted">{p.statusError}</p>
           ) : (
             <KeyValue
               rows={[
-                ["Backend", s?.backend ?? "—"],
-                ["Sessione", s?.session ?? "—"],
-                ["Container", s?.container ?? "—"],
-                ["Vendor", s?.vendor_type ?? "—"],
-                ["IP", s?.ip_address ?? "—"],
-                ["Utente", s?.session_user ?? "—"],
-                ["Display Wayland", s?.wayland_display ?? "—"],
+                [t("diag.backend"), s?.backend ?? "—"],
+                [t("diag.session"), s?.session ?? "—"],
+                [t("kv.container"), s?.container ?? "—"],
+                [t("diag.vendor"), s?.vendor_type ?? "—"],
+                [t("kv.ip"), s?.ip_address ?? "—"],
+                [t("diag.user"), s?.session_user ?? "—"],
+                [t("diag.wayland"), s?.wayland_display ?? "—"],
               ]}
             />
           )}
         </Card>
         <Card
-          title="Configurazione grafica di Android"
+          title={t("diag.gfx")}
+          icon={mdiExpansionCardVariant}
           actions={
-            <Button disabled={!running} busy={busy === "gfx"} onClick={() => run("gfx", api.graphics).then((g) => g && setGfx(g))}>
-              Leggi
+            <Button kind="tonal" disabled={!running} busy={busy === "gfx"} onClick={() => run("gfx", api.graphics).then((g) => g && setGfx(g))}>
+              {t("diag.read")}
             </Button>
           }
         >
@@ -63,26 +66,27 @@ export function Diagnostics(p: Shared) {
               ]}
             />
           ) : (
-            <p className="muted">{running ? "Proprietà lette da Android (configurazione, non prova di accelerazione)." : "Disponibile con Android avviato."}</p>
+            <p className="muted">{running ? t("diag.gfx.hintRunning") : t("diag.gfx.hintStopped")}</p>
           )}
         </Card>
       </div>
       <Card
-        title="Log"
+        title={t("diag.logs")}
+        icon={mdiFileDocumentOutline}
         actions={
           <>
             <select value={lines} onChange={(e) => setLines(Number(e.target.value))}>
               {[100, 200, 500, 1000].map((n) => (
                 <option key={n} value={n}>
-                  ultime {n} righe
+                  {t("diag.lines", { n })}
                 </option>
               ))}
             </select>
-            <Button onClick={() => void loadLogs()}>Aggiorna</Button>
+            <IconButton icon={mdiRefresh} label={t("common.refresh")} onClick={() => void loadLogs()} />
           </>
         }
       >
-        <pre className="log">{logs || "…"}</pre>
+        <pre className="log mono">{logs || "…"}</pre>
       </Card>
     </div>
   );

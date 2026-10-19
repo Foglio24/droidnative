@@ -8,6 +8,7 @@ use droidnative_core::apk::{inspect_apk, ApkInfo};
 use droidnative_core::exec::{CmdOutput, SystemRunner};
 use droidnative_core::gpu::AccelVerdict;
 use droidnative_core::host::probe_local;
+use droidnative_core::tr;
 use droidnative_core::nvidia_stack::NvidiaMode;
 use droidnative_core::privileged::{escalator_from_env, Escalator, GpuSelection, PrivilegedOp};
 use droidnative_core::report::{build_report, CompatibilityReport};
@@ -40,7 +41,7 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     let start = std::time::Instant::now();
-    let result = tauri::async_runtime::spawn_blocking(f).await.map_err(|e| format!("errore interno: {e}"))?;
+    let result = tauri::async_runtime::spawn_blocking(f).await.map_err(|e| tr!("errore interno: {e}", "internal error: {e}"))?;
     if std::env::var_os("DROIDNATIVE_TRACE").is_some() {
         match &result {
             Ok(_) => eprintln!("[droidnative] {name} ok in {:?}", start.elapsed()),
@@ -54,8 +55,15 @@ fn privileged_output(out: CmdOutput) -> Result<String, String> {
     if out.success() {
         Ok(out.combined())
     } else {
-        Err(if out.combined().is_empty() { format!("operazione fallita (codice {:?})", out.status) } else { out.combined() })
+        let code = out.status;
+        Err(if out.combined().is_empty() { tr!("operazione fallita (codice {code:?})", "operation failed (code {code:?})") } else { out.combined() })
     }
+}
+
+/// Language for the UI, decided with the same rule as every backend message.
+#[tauri::command]
+fn app_language() -> &'static str {
+    droidnative_core::i18n::lang().code()
 }
 
 #[tauri::command]
@@ -84,8 +92,9 @@ async fn run_setup_step(state: tauri::State<'_, AppState>, id: String) -> Result
     blocking("run_setup_step", move || {
         let report = build_report(probe_local());
         let steps = setup::plan(&report.host, &report.gpu_plan);
-        let step = steps.into_iter().find(|s| s.id == id).ok_or_else(|| format!("passo sconosciuto: {id}"))?;
-        let op = step.op.ok_or_else(|| format!("il passo non è eseguibile: {}", step.detail))?;
+        let step = steps.into_iter().find(|s| s.id == id).ok_or_else(|| tr!("passo sconosciuto: {id}", "unknown step: {id}"))?;
+        let detail = step.detail.clone();
+        let op = step.op.ok_or_else(|| tr!("il passo non è eseguibile: {detail}", "this step cannot be run: {detail}"))?;
         privileged_output(esc.run(&op).map_err(|e| e.to_string())?)
     })
     .await
@@ -169,7 +178,7 @@ async fn install_apk(state: tauri::State<'_, AppState>, path: String, expected_s
         let abi = probe_local().cpu.android_abi;
         let info = inspect_apk(&PathBuf::from(path), abi.as_deref()).map_err(|e| e.to_string())?;
         if info.sha256 != expected_sha256 {
-            return Err("il file è cambiato dopo l'ispezione: installazione annullata".into());
+            return Err(tr!("il file è cambiato dopo l'ispezione: installazione annullata", "the file changed after inspection: installation cancelled"));
         }
         rt.install_apk(&info).map_err(|e| e.to_string())
     })
@@ -217,6 +226,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
+            app_language,
             get_report,
             get_setup,
             run_setup_step,

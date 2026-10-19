@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { mdiDeleteOutline, mdiFolderOpenOutline, mdiMagnify, mdiOpenInNew, mdiPackageVariantPlus, mdiPlay, mdiRefresh, mdiRocketLaunchOutline } from "@mdi/js";
 import type { Shared } from "../App";
-import { api, bytes, errorText } from "../api";
+import { api, errorText } from "../api";
+import { formatBytes, t, type Key } from "../i18n";
 import type { AndroidApp, ApkInfo } from "../types";
-import { Button, Card, Chip, ConfirmModal, KeyValue, useAction } from "../ui";
+import { Button, Card, Chip, Dialog, Icon, IconButton, KeyValue, Loading, PageHead, useAction } from "../ui";
 
-const ABI_NOTE: Record<ApkInfo["abi_compat"], [string, string]> = {
-  universal: ["pass", "Nessun codice nativo: compatibile"],
-  native: ["pass", "Codice nativo per questa CPU"],
-  needs_translation: ["warn", "Solo codice ARM: serve un layer di traduzione (libhoudini/libndk), non incluso in Waydroid"],
-  incompatible: ["fail", "Codice nativo per un'architettura non supportata"],
+const ABI_TONE: Record<ApkInfo["abi_compat"], string> = {
+  universal: "pass",
+  native: "pass",
+  needs_translation: "warn",
+  incompatible: "fail",
 };
+
+function AppAvatar({ app }: { app: AndroidApp }) {
+  const [broken, setBroken] = useState(false);
+  if (app.icon && !broken) {
+    return <img className="app-avatar" src={convertFileSrc(app.icon)} alt="" onError={() => setBroken(true)} />;
+  }
+  return <span className="app-avatar">{app.name.slice(0, 1).toUpperCase()}</span>;
+}
 
 export function Apps(p: Shared) {
   const { busy, run } = useAction(p.setNotice);
@@ -36,6 +47,21 @@ export function Apps(p: Shared) {
     if (running) void load();
   }, [running, load]);
 
+  const pick = useCallback(async () => {
+    const path = await open({ multiple: false, directory: false, filters: [{ name: t("apps.filter"), extensions: ["apk"] }] });
+    if (typeof path !== "string") return;
+    const info = await run("inspect", () => api.inspectApk(path));
+    if (info) setApk(info);
+  }, [run]);
+
+  // "Install APK" on the overview lands here and opens the picker right away.
+  useEffect(() => {
+    if (p.pickApk && running) {
+      p.setPickApk(false);
+      void pick();
+    }
+  }, [p, running, pick]);
+
   const shown = useMemo(() => {
     const f = filter.trim().toLowerCase();
     const list = apps ?? [];
@@ -44,17 +70,8 @@ export function Apps(p: Shared) {
     );
   }, [apps, filter]);
 
-  const pick = async () => {
-    const path = await open({ multiple: false, directory: false, filters: [{ name: "Pacchetto Android", extensions: ["apk"] }] });
-    if (typeof path !== "string") return;
-    const info = await run("inspect", () => api.inspectApk(path));
-    if (info) setApk(info);
-  };
-
   const install = async (info: ApkInfo) => {
-    const out = await run("install", () => api.installApk(info.path, info.sha256), (o) =>
-      `${o.package} ${o.was_update ? "aggiornato" : "installato"} — presenza verificata nell'elenco delle app`,
-    );
+    const out = await run("install", () => api.installApk(info.path, info.sha256), (o) => t(o.was_update ? "apps.updated" : "apps.installed", { pkg: o.package }));
     if (out) {
       setApk(null);
       await load();
@@ -64,127 +81,130 @@ export function Apps(p: Shared) {
   if (!running) {
     return (
       <div className="page">
-        <h1>App Android</h1>
-        <Card>
-          <p>{ready ? "Avvia Android per vedere e gestire le app installate." : "Completa prima l'installazione guidata."}</p>
-          {ready ? (
-            <Button kind="primary" busy={busy === "start"} onClick={() => run("start", api.start, () => "Android è avviato").then(() => p.refreshStatus())}>
-              Avvia Android
-            </Button>
-          ) : (
-            <Button kind="primary" onClick={() => p.go("setup")}>
-              Installazione guidata
-            </Button>
-          )}
-        </Card>
+        <PageHead title={t("apps.title")} />
+        <section className="card hero idle">
+          <p className="body-l" style={{ marginTop: 0 }}>
+            {ready ? t("apps.notRunning") : t("apps.notReady")}
+          </p>
+          <div className="row">
+            {ready ? (
+              <Button kind="filled" icon={mdiPlay} busy={busy === "start"} onClick={() => run("start", api.start, () => t("toast.started")).then(() => p.refreshStatus())}>
+                {t("btn.start")}
+              </Button>
+            ) : (
+              <Button kind="filled" icon={mdiRocketLaunchOutline} onClick={() => p.go("setup")}>
+                {t("btn.openSetup")}
+              </Button>
+            )}
+          </div>
+          {busy === "start" && <div className="progress" />}
+        </section>
       </div>
     );
   }
 
   return (
     <div className="page">
-      <h1>App Android</h1>
-      <Card
-        title="Installa un APK"
+      <PageHead
+        title={t("apps.title")}
         actions={
-          <Button kind="primary" busy={busy === "inspect"} disabled={busy === "install"} onClick={() => void pick()}>
-            Scegli file APK…
+          <Button kind="filled" icon={mdiPackageVariantPlus} busy={busy === "inspect"} disabled={busy === "install"} onClick={() => void pick()}>
+            {t("btn.installApk")}
           </Button>
         }
-      >
-        {!apk && <p className="muted">Il file viene analizzato (manifest, ABI, permessi, SHA-256) prima di chiederti conferma.</p>}
-        {apk && (
-          <div className="apk">
-            <KeyValue
-              rows={[
-                ["Package", <code>{apk.package}</code>],
-                ["Nome", apk.label ?? "—"],
-                ["Versione", `${apk.version_name ?? "?"} (${apk.version_code ?? "?"})`],
-                ["SDK", `min ${apk.min_sdk ?? "?"} · target ${apk.target_sdk ?? "?"}`],
-                ["Dimensione", bytes(apk.file_size)],
-                ["ABI", apk.native_abis.length ? apk.native_abis.join(", ") : "nessuna"],
-                ["SHA-256", <code className="hash">{apk.sha256}</code>],
-              ]}
-            />
-            <p>
-              <Chip tone={ABI_NOTE[apk.abi_compat][0]}>{apk.abi_compat.replace("_", " ")}</Chip> {ABI_NOTE[apk.abi_compat][1]}
-            </p>
-            {apk.min_sdk != null && apk.min_sdk > 33 && (
-              <p>
-                <Chip tone="warn">SDK</Chip> Richiede Android API {apk.min_sdk}: l'immagine Waydroid è Android 13 (API 33).
-              </p>
-            )}
-            <details>
-              <summary>{apk.permissions.length} permessi richiesti</summary>
-              <ul className="small">{apk.permissions.map((x) => <li key={x}>{x}</li>)}</ul>
-            </details>
-            <div className="row">
-              <Button kind="primary" busy={busy === "install"} disabled={apk.abi_compat === "incompatible"} onClick={() => void install(apk)}>
-                Installa
-              </Button>
-              <Button disabled={busy === "install"} onClick={() => setApk(null)}>
-                Annulla
-              </Button>
-            </div>
+      />
+
+      {apk && (
+        <Card title={apk.label ?? apk.package} icon={mdiPackageVariantPlus}>
+          <KeyValue
+            rows={[
+              [t("apk.package"), <code>{apk.package}</code>],
+              [t("apk.version"), `${apk.version_name ?? "?"} (${apk.version_code ?? "?"})`],
+              [t("apk.sdk"), `min ${apk.min_sdk ?? "?"} · target ${apk.target_sdk ?? "?"}`],
+              [t("apk.size"), formatBytes(apk.file_size)],
+              [t("apk.abi"), apk.native_abis.length ? apk.native_abis.join(", ") : t("common.none")],
+              ["SHA-256", <code style={{ fontSize: 11.5 }}>{apk.sha256}</code>],
+            ]}
+          />
+          <div className="row" style={{ marginTop: 14 }}>
+            <Chip tone={ABI_TONE[apk.abi_compat]}>{t(`apk.compat.${apk.abi_compat}` as Key)}</Chip>
+            {apk.min_sdk != null && apk.min_sdk > 33 && <Chip tone="warn">{t("apk.sdkWarn", { sdk: apk.min_sdk })}</Chip>}
           </div>
-        )}
-      </Card>
+          <details>
+            <summary>{t("apk.permissions", { n: apk.permissions.length })}</summary>
+            <ul className="small mono">{apk.permissions.map((x) => <li key={x}>{x}</li>)}</ul>
+          </details>
+          <div className="row" style={{ marginTop: 16 }}>
+            <Button kind="filled" busy={busy === "install"} disabled={apk.abi_compat === "incompatible"} onClick={() => void install(apk)}>
+              {t("btn.install")}
+            </Button>
+            <Button kind="text" disabled={busy === "install"} onClick={() => setApk(null)}>
+              {t("common.cancel")}
+            </Button>
+          </div>
+          {busy === "install" && <div className="progress" />}
+        </Card>
+      )}
+
+      {!apk && (
+        <section className="card outlined">
+          <div className="row">
+            <Icon path={mdiFolderOpenOutline} />
+            <span className="muted">{t("apps.install.hint")}</span>
+          </div>
+        </section>
+      )}
 
       <Card
-        title={`App installate${apps ? ` (${apps.length})` : ""}`}
+        title={apps ? `${t("apps.list")} · ${t("apps.count", { n: apps.length })}` : t("apps.list")}
         actions={
           <>
-            <input className="search" placeholder="Cerca…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            <Button onClick={() => void load()}>Aggiorna</Button>
+            <label className="search">
+              <Icon path={mdiMagnify} />
+              <input placeholder={t("apps.search")} value={filter} onChange={(e) => setFilter(e.target.value)} />
+            </label>
+            <IconButton icon={mdiRefresh} label={t("common.refresh")} onClick={() => void load()} />
           </>
         }
       >
-        {listError && <div className="notice notice-error"><pre>{listError}</pre></div>}
-        {!apps && !listError && <div className="loading">Lettura dell'elenco…</div>}
-        {apps && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Package</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((a) => (
-                <tr key={a.package}>
-                  <td>{a.name}</td>
-                  <td>
-                    <code>{a.package}</code>
-                  </td>
-                  <td className="actions">
-                    <Button busy={busy === `launch:${a.package}`} onClick={() => run(`launch:${a.package}`, () => api.launch(a.package))}>
-                      Avvia
-                    </Button>
-                    <Button kind="danger" onClick={() => setRemoving(a)}>
-                      Disinstalla
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {listError && <p className="item-remedy">{listError}</p>}
+        {!apps && !listError && <Loading text={t("apps.reading")} />}
+        {apps && shown.length === 0 && <div className="empty">{t("apps.empty")}</div>}
+        {apps && shown.length > 0 && (
+          <ul className="list">
+            {shown.map((a) => (
+              <li key={a.package} className="list-item center">
+                <AppAvatar app={a} />
+                <div className="item-main">
+                  <div className="item-title">{a.name}</div>
+                  <div className="item-sub small mono">{a.package}</div>
+                </div>
+                <div className="item-trailing">
+                  <Button kind="tonal" icon={mdiOpenInNew} busy={busy === `launch:${a.package}`} onClick={() => run(`launch:${a.package}`, () => api.launch(a.package))}>
+                    {t("btn.launch")}
+                  </Button>
+                  <IconButton icon={mdiDeleteOutline} label={t("btn.uninstall")} danger onClick={() => setRemoving(a)} busy={busy === `remove:${a.package}`} />
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 
       {removing && (
-        <ConfirmModal
-          title={`Disinstallare ${removing.name}?`}
-          body={<p>L'app <code>{removing.package}</code> e i suoi dati verranno rimossi da Android.</p>}
-          confirmLabel="Disinstalla"
+        <Dialog
+          title={t("dlg.uninstall.title", { name: removing.name })}
+          confirmLabel={t("btn.uninstall")}
           danger
           onCancel={() => setRemoving(null)}
           onConfirm={() => {
             const target = removing;
             setRemoving(null);
-            void run("remove", () => api.uninstall(target.package), (how) => `${target.package} rimosso e verificato (${how})`).then(load);
+            void run(`remove:${target.package}`, () => api.uninstall(target.package), (how) => t("apps.removed", { pkg: target.package, how })).then(load);
           }}
-        />
+        >
+          <p>{t("dlg.uninstall.body", { pkg: removing.package })}</p>
+        </Dialog>
       )}
     </div>
   );

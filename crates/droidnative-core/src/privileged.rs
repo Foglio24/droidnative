@@ -13,21 +13,38 @@ use crate::exec::{CmdOutput, CommandRunner};
 use crate::fs::HostFs;
 use crate::ini::Ini;
 use crate::runtime::waydroid::{CONTAINER_UNIT, WAYDROID_CFG};
+use crate::tr;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum PrivError {
-    #[error("autorizzazione negata o annullata dall'utente")]
     AuthDenied,
-    #[error("pkexec non disponibile: installa il pacchetto polkit (pkexec)")]
     NoPkexec,
-    #[error("operazione non valida: {0}")]
     Invalid(String),
-    #[error("{0} non è installato")]
     Missing(&'static str),
-    #[error("passo `{step}` fallito: {output}")]
     StepFailed { step: String, output: String },
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for PrivError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::AuthDenied => tr!("autorizzazione negata o annullata dall'utente", "authorization denied or cancelled by the user"),
+            Self::NoPkexec => tr!("pkexec non disponibile: installa il pacchetto polkit (pkexec)", "pkexec not available: install the polkit (pkexec) package"),
+            Self::Invalid(m) => tr!("operazione non valida: {m}", "invalid operation: {m}"),
+            Self::Missing(what) => tr!("{what} non è installato", "{what} is not installed"),
+            Self::StepFailed { step, output } => tr!("passo `{step}` fallito: {output}", "step `{step}` failed: {output}"),
+            Self::Io(e) => e.to_string(),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for PrivError {}
+
+impl From<std::io::Error> for PrivError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,7 +98,7 @@ pub fn validate_suite(suite: &str) -> Result<(), PrivError> {
     if WAYDROID_REPO_SUITES.contains(&suite) {
         Ok(())
     } else {
-        Err(PrivError::Invalid(format!("release {suite:?} non pubblicata su repo.waydro.id")))
+        Err(PrivError::Invalid(tr!("release {suite:?} non pubblicata su repo.waydro.id", "release {suite:?} is not published on repo.waydro.id")))
     }
 }
 
@@ -135,31 +152,45 @@ impl PrivilegedOp {
 
     pub fn description(&self) -> String {
         match self {
-            Self::InstallWaydroid { suite } => format!("Aggiungere repo.waydro.id ({suite}, chiave {}) e installare waydroid", &WAYDROID_KEY_FPR[24..]),
-            Self::InstallDiagnostics => format!("Installare gli strumenti diagnostici ({})", DIAGNOSTIC_PACKAGES.join(", ")),
-            Self::AllowContainerNetwork => format!(
-                "Aggiungere al firewall UFW:\n{}",
-                UFW_CONTAINER_RULES.iter().map(|r| format!("ufw {}", r.join(" "))).collect::<Vec<_>>().join("\n")
+            Self::InstallWaydroid { suite } => {
+                let key = &WAYDROID_KEY_FPR[24..];
+                tr!("Aggiungere repo.waydro.id ({suite}, chiave {key}) e installare waydroid", "Add repo.waydro.id ({suite}, key {key}) and install waydroid")
+            }
+            Self::InstallDiagnostics => {
+                let pkgs = DIAGNOSTIC_PACKAGES.join(", ");
+                tr!("Installare gli strumenti diagnostici ({pkgs})", "Install the diagnostic tools ({pkgs})")
+            }
+            Self::AllowContainerNetwork => {
+                let rules = UFW_CONTAINER_RULES.iter().map(|r| format!("ufw {}", r.join(" "))).collect::<Vec<_>>().join("\n");
+                tr!("Aggiungere al firewall UFW:\n{rules}", "Add to the UFW firewall:\n{rules}")
+            }
+            Self::LoadBinder => tr!("Caricare il modulo kernel binder_linux", "Load the binder_linux kernel module"),
+            Self::EnableContainerService => tr!("Abilitare e avviare {CONTAINER_UNIT}", "Enable and start {CONTAINER_UNIT}"),
+            Self::RestartContainerService => tr!("Riavviare {CONTAINER_UNIT}", "Restart {CONTAINER_UNIT}"),
+            Self::StopContainerService => tr!("Arrestare {CONTAINER_UNIT}", "Stop {CONTAINER_UNIT}"),
+            Self::InitWaydroid { system_type } => {
+                let t = system_type.as_arg();
+                tr!("Scaricare e verificare le immagini Android ({t})", "Download and verify the Android images ({t})")
+            }
+            Self::SelectGpu { selection: GpuSelection::RenderNode(n) } => tr!("Usare la GPU {n} per Android", "Use GPU {n} for Android"),
+            Self::SelectGpu { selection: GpuSelection::Software } => tr!("Forzare il rendering software (SwiftShader)", "Force software rendering (SwiftShader)"),
+            Self::SelectGpu { selection: GpuSelection::Auto } => tr!("Ripristinare la scelta GPU automatica di Waydroid", "Restore Waydroid's automatic GPU choice"),
+            Self::GraphicsDiagnostics => tr!(
+                "Leggere il renderer usato da SurfaceFlinger e gli errori di visualizzazione",
+                "Read the renderer SurfaceFlinger uses and the display errors"
             ),
-            Self::LoadBinder => "Caricare il modulo kernel binder_linux".into(),
-            Self::EnableContainerService => format!("Abilitare e avviare {CONTAINER_UNIT}"),
-            Self::RestartContainerService => format!("Riavviare {CONTAINER_UNIT}"),
-            Self::StopContainerService => format!("Arrestare {CONTAINER_UNIT}"),
-            Self::InitWaydroid { system_type } => format!("Scaricare e verificare le immagini Android ({})", system_type.as_arg()),
-            Self::SelectGpu { selection: GpuSelection::RenderNode(n) } => format!("Usare la GPU {n} per Android"),
-            Self::SelectGpu { selection: GpuSelection::Software } => "Forzare il rendering software (SwiftShader)".into(),
-            Self::SelectGpu { selection: GpuSelection::Auto } => "Ripristinare la scelta GPU automatica di Waydroid".into(),
-            Self::GraphicsDiagnostics => "Leggere il renderer usato da SurfaceFlinger e gli errori di visualizzazione".into(),
-            Self::UninstallPackage { package } => format!("Disinstallare {package} con il gestore pacchetti di Android"),
-            Self::InstallNvidiaStack { tag, mode } => format!(
-                "Installare waydroid-nvidia {tag} (modalità {}):\n\
-                 - scaricare il rilascio e verificarne gli hash fissati in DroidNative (~260 MB)\n\
-                 - rimuovere (purge) il pacchetto waydroid della distribuzione; immagini e dati Android restano\n\
-                 - installare la Waydroid patchata e lo stack grafico NVIDIA con l'installer ufficiale\n\
-                 - attivare la modalità con waydroid-nvidia-setup",
-                mode.as_arg()
-            ),
-            Self::NvidiaSetMode { mode } => format!("Passare waydroid-nvidia alla modalità {}", mode.as_arg()),
+            Self::UninstallPackage { package } => tr!("Disinstallare {package} con il gestore pacchetti di Android", "Uninstall {package} with Android's package manager"),
+            Self::InstallNvidiaStack { tag, mode } => {
+                let mode = mode.as_arg();
+                tr!(
+                    "Installare waydroid-nvidia {tag} (modalità {mode}):\n- scaricare il rilascio e verificarne gli hash fissati in DroidNative (~260 MB)\n- rimuovere (purge) il pacchetto waydroid della distribuzione; immagini e dati Android restano\n- installare la Waydroid patchata e lo stack grafico NVIDIA con l'installer ufficiale\n- attivare la modalità con waydroid-nvidia-setup",
+                    "Install waydroid-nvidia {tag} ({mode} mode):\n- download the release and check it against the hashes pinned in DroidNative (~260 MB)\n- purge the distribution's waydroid package; Android images and data are kept\n- install the patched Waydroid and the NVIDIA graphics stack with the official installer\n- activate the mode with waydroid-nvidia-setup"
+                )
+            }
+            Self::NvidiaSetMode { mode } => {
+                let mode = mode.as_arg();
+                tr!("Passare waydroid-nvidia alla modalità {mode}", "Switch waydroid-nvidia to {mode} mode")
+            }
         }
     }
 
@@ -189,11 +220,11 @@ impl Escalator for PkexecEscalator {
     fn run(&self, op: &PrivilegedOp) -> Result<CmdOutput, PrivError> {
         let pkexec = self.cmd.which("pkexec").ok_or(PrivError::NoPkexec)?;
         if !self.helper.is_absolute() {
-            return Err(PrivError::Invalid("il helper deve avere un percorso assoluto".into()));
+            return Err(PrivError::Invalid(tr!("il helper deve avere un percorso assoluto", "the helper needs an absolute path")));
         }
         let helper = self.helper.to_string_lossy().into_owned();
         let args = op.to_args();
-        let mut argv: Vec<&str> = vec![&helper, "priv"];
+        let mut argv: Vec<&str> = vec![&helper, "priv", "--lang", crate::i18n::lang().code()];
         argv.extend(args.iter().map(String::as_str));
         let out = self.cmd.run_with_timeout(&pkexec.to_string_lossy(), &argv, op.timeout())?;
         // pkexec: 126 = dialog dismissed / not authorized, 127 = authentication failed.
@@ -215,11 +246,11 @@ impl Escalator for SudoEscalator {
     fn run(&self, op: &PrivilegedOp) -> Result<CmdOutput, PrivError> {
         let sudo = self.cmd.which("sudo").ok_or(PrivError::Missing("sudo"))?;
         if !self.helper.is_absolute() {
-            return Err(PrivError::Invalid("il helper deve avere un percorso assoluto".into()));
+            return Err(PrivError::Invalid(tr!("il helper deve avere un percorso assoluto", "the helper needs an absolute path")));
         }
         let helper = self.helper.to_string_lossy().into_owned();
         let args = op.to_args();
-        let mut argv: Vec<&str> = vec!["-n", &helper, "priv"];
+        let mut argv: Vec<&str> = vec!["-n", &helper, "priv", "--lang", crate::i18n::lang().code()];
         argv.extend(args.iter().map(String::as_str));
         let out = self.cmd.run_with_timeout(&sudo.to_string_lossy(), &argv, op.timeout())?;
         if !out.success() && out.stderr.contains("a password is required") {
@@ -242,18 +273,19 @@ pub fn escalator_from_env(helper: PathBuf, cmd: Arc<dyn CommandRunner>) -> Box<d
 pub fn validate_render_node(fs: &HostFs, node: &str) -> Result<(), PrivError> {
     let n = node.strip_prefix("/dev/dri/renderD").ok_or_else(|| PrivError::Invalid(format!("nodo non valido: {node:?}")))?;
     if n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
-        return Err(PrivError::Invalid(format!("nodo non valido: {node:?}")));
+        return Err(PrivError::Invalid(tr!("nodo non valido: {node:?}", "invalid node: {node:?}")));
     }
     if !fs.exists(node) {
-        return Err(PrivError::Invalid(format!("{node} non esiste")));
+        return Err(PrivError::Invalid(tr!("{node} non esiste", "{node} does not exist")));
     }
     let name = node.rsplit('/').next().unwrap_or_default();
     let driver = fs
         .read(format!("/sys/class/drm/{name}/device/uevent"))
         .and_then(|u| crate::fs::lookup(&crate::fs::parse_key_values(&u), "DRIVER").map(str::to_string));
     if driver.as_deref() == Some("nvidia") {
-        return Err(PrivError::Invalid(format!(
-            "{node} è una GPU NVIDIA: Mesa non può usarla, scegli il backend NVIDIA Accelerated"
+        return Err(PrivError::Invalid(tr!(
+            "{node} è una GPU NVIDIA: Mesa non può usarla, scegli il backend NVIDIA Accelerated",
+            "{node} is an NVIDIA GPU: Mesa cannot use it, pick the NVIDIA Accelerated backend"
         )));
     }
     Ok(())
@@ -329,8 +361,8 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
             if first_fpr != WAYDROID_KEY_FPR {
                 let _ = std::fs::remove_file(&tmp);
                 return Err(PrivError::StepFailed {
-                    step: "verifica chiave repo.waydro.id".into(),
-                    output: format!("impronta {first_fpr:?} diversa da quella attesa {WAYDROID_KEY_FPR}"),
+                    step: tr!("verifica chiave repo.waydro.id", "repo.waydro.id key check"),
+                    output: tr!("impronta {first_fpr:?} diversa da quella attesa {WAYDROID_KEY_FPR}", "fingerprint {first_fpr:?} differs from the expected {WAYDROID_KEY_FPR}"),
                 });
             }
             std::fs::rename(&tmp, &keyring)?;
@@ -338,7 +370,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
             std::fs::write(fs.path(WAYDROID_SOURCES), &line)?;
             let mut log = step("apt-get", &["update"], Duration::from_secs(900))?;
             let install = step("env", &["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "waydroid"], op.timeout())?;
-            log.stdout = format!("chiave verificata: {first_fpr}\n{line}{}\n{}", log.stdout, install.stdout);
+            log.stdout = format!("{}: {first_fpr}\n{line}{}\n{}", tr!("chiave verificata", "key verified"), log.stdout, install.stdout);
             Ok(log)
         }
         PrivilegedOp::InstallDiagnostics => {
@@ -348,7 +380,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         }
         PrivilegedOp::InstallNvidiaStack { tag, mode } => {
             let release = crate::nvidia_stack::find_release(tag)
-                .ok_or_else(|| PrivError::Invalid(format!("rilascio waydroid-nvidia {tag:?} non fissato in DroidNative")))?;
+                .ok_or_else(|| PrivError::Invalid(tr!("rilascio waydroid-nvidia {tag:?} non fissato in DroidNative", "waydroid-nvidia release {tag:?} is not pinned in DroidNative")))?;
             crate::nvidia_stack::install(release, *mode, fs, cmd)
         }
         PrivilegedOp::NvidiaSetMode { mode } => crate::nvidia_stack::set_mode(*mode, fs, cmd),
@@ -377,7 +409,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         }
         PrivilegedOp::UninstallPackage { package } => {
             if crate::runtime::validate_package_name(package).is_err() {
-                return Err(PrivError::Invalid(format!("nome package non valido: {package:?}")));
+                return Err(PrivError::Invalid(tr!("nome package non valido: {package:?}", "invalid package name: {package:?}")));
             }
             let out = step(&waydroid()?, &["shell", "--", "pm", "uninstall", package], op.timeout())?;
             if !out.stdout.contains("Success") {
@@ -392,7 +424,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
             let bin = waydroid()?;
             let cfg_path = fs.path(WAYDROID_CFG);
             let current = std::fs::read_to_string(&cfg_path)
-                .map_err(|_| PrivError::Invalid("waydroid.cfg assente: inizializza prima Android".into()))?;
+                .map_err(|_| PrivError::Invalid(tr!("waydroid.cfg assente: inizializza prima Android", "waydroid.cfg missing: initialize Android first")))?;
             replace_file(&cfg_path, &apply_gpu_selection(&current, selection))?;
             // Regenerates the base props (ro.hardware.egl/gralloc) from the new config.
             let mut log = step(&bin, &["upgrade", "-o"], op.timeout())?;
@@ -538,7 +570,7 @@ mod tests {
         let runner = Arc::new(
             FakeRunner::new()
                 .with_program("pkexec")
-                .respond("/usr/bin/pkexec /usr/bin/droidnative priv load-binder", CmdOutput::failed(126, "Error executing command as another user: Not authorized")),
+                .respond("/usr/bin/pkexec /usr/bin/droidnative priv --lang it load-binder", CmdOutput::failed(126, "Error executing command as another user: Not authorized")),
         );
         let esc = PkexecEscalator { helper: PathBuf::from("/usr/bin/droidnative"), cmd: runner };
         assert!(matches!(esc.run(&PrivilegedOp::LoadBinder), Err(PrivError::AuthDenied)));
@@ -549,8 +581,8 @@ mod tests {
         let runner = Arc::new(
             FakeRunner::new()
                 .with_program("sudo")
-                .respond("/usr/bin/sudo -n /usr/bin/droidnative priv load-binder", CmdOutput::failed(1, "sudo: a password is required\n"))
-                .respond("/usr/bin/sudo -n /usr/bin/droidnative priv graphics-diagnostics", CmdOutput::ok("GLES: AMD\n")),
+                .respond("/usr/bin/sudo -n /usr/bin/droidnative priv --lang it load-binder", CmdOutput::failed(1, "sudo: a password is required\n"))
+                .respond("/usr/bin/sudo -n /usr/bin/droidnative priv --lang it graphics-diagnostics", CmdOutput::ok("GLES: AMD\n")),
         );
         let esc = SudoEscalator { helper: PathBuf::from("/usr/bin/droidnative"), cmd: runner };
         assert!(matches!(esc.run(&PrivilegedOp::LoadBinder), Err(PrivError::AuthDenied)));

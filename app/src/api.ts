@@ -40,15 +40,3 @@ export function errorText(e: unknown): string {
   if (e instanceof Error) return e.message;
   return JSON.stringify(e);
 }
-
-export function bytes(n: number | null | undefined): string {
-  if (n == null) return "—";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}

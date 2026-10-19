@@ -1,19 +1,21 @@
 import { useState } from "react";
+import { mdiChevronDown, mdiCogOutline, mdiDownload, mdiLightbulbOnOutline, mdiRestart, mdiTune } from "@mdi/js";
 import type { Shared } from "../App";
 import { api } from "../api";
+import { t, type Key } from "../i18n";
 import type { BackendAssessment, GpuSelection, NvidiaMode } from "../types";
-import { Button, Card, CheckList, Chip, ConfirmModal, useAction } from "../ui";
+import { Button, Card, CheckList, Chip, Dialog, Icon, PageHead, useAction } from "../ui";
 
-const READINESS: Record<BackendAssessment["readiness"], [string, string]> = {
-  ready: ["pass", "Pronto"],
-  needs_setup: ["missing", "Da installare o attivare"],
-  unsupported: ["fail", "Non supportato"],
+const READINESS_TONE: Record<BackendAssessment["readiness"], string> = {
+  ready: "pass",
+  needs_setup: "missing",
+  unsupported: "fail",
 };
 
-const STABILITY: Record<BackendAssessment["descriptor"]["stability"], [string, string]> = {
-  stable: ["info", "Stabile"],
-  experimental: ["warn", "Sperimentale"],
-  fallback: ["unknown", "Fallback"],
+const STABILITY_TONE: Record<BackendAssessment["descriptor"]["stability"], string | undefined> = {
+  stable: "info",
+  experimental: "warn",
+  fallback: undefined,
 };
 
 type Pending = { label: string; detail: string; run: () => Promise<string> } | null;
@@ -26,16 +28,16 @@ export function Gpu(p: Shared) {
   const cfg = w.config;
   const configured = cfg?.drm_device ?? null;
   const forcedSoftware = cfg?.properties.some(([k, v]) => k === "ro.hardware.egl" && v === "swiftshader") ?? false;
+  const nvidiaInstalled = w.nvidia_setup != null;
 
-  const CFG_NOTE =
-    "DroidNative aggiorna /var/lib/waydroid/waydroid.cfg (con copia di sicurezza), rigenera le proprietà Android e riavvia il container se è attivo. Le app aperte verranno chiuse. Verrà chiesta la password di amministratore.";
-  const select = (label: string, sel: GpuSelection) => setPending({ label, detail: CFG_NOTE, run: () => api.selectGpu(sel) });
+  const select = (label: string, sel: GpuSelection) => setPending({ label, detail: t("dlg.gpu.cfgNote"), run: () => api.selectGpu(sel) });
 
   const apply = async (job: NonNullable<Pending>) => {
     setPending(null);
-    await run("select", job.run, (out) =>
-      `${job.label}: fatto. Avvia Android e usa «Verifica ora» per confermare il renderer reale.${out ? "\n\n" + out.split("\n").slice(-12).join("\n") : ""}`,
-    );
+    await run("select", job.run, (out) => {
+      const tail = out ? `\n\n${out.split("\n").slice(-10).join("\n")}` : "";
+      return t("gpu.done", { label: job.label }) + tail;
+    });
     p.setVerdict(null);
     await Promise.all([p.refreshReport(), p.refreshStatus()]);
   };
@@ -45,151 +47,172 @@ export function Gpu(p: Shared) {
     switch (a.descriptor.kind) {
       case "mesa_native": {
         const node = a.target_render_node;
-        const active = node != null && configured === node && !forcedSoftware;
+        const active = node != null && configured === node && !forcedSoftware && !nvidiaInstalled;
+        if (active) return <Chip tone="pass">{t("gpu.configured")}</Chip>;
+        if (a.readiness === "unsupported") return <Chip tone="fail">{t("gpu.unavailable")}</Chip>;
         return (
           <Button
-            kind="primary"
-            disabled={notInit || !node || a.readiness === "unsupported" || active || w.nvidia_setup != null}
+            kind="tonal"
+            disabled={notInit || !node || nvidiaInstalled}
             busy={busy === "select"}
-            title={notInit ? "Inizializza prima Android" : undefined}
-            onClick={() => node && select(`Mesa Native su ${a.target_device} (${node})`, { mode: "render_node", node })}
+            onClick={() => node && select(t("gpu.label.mesa", { dev: a.target_device ?? "?", node }), { mode: "render_node", node })}
           >
-            {active ? "Configurato" : `Usa ${node ?? "GPU"}`}
+            {t("gpu.use", { node: node ?? "GPU" })}
           </Button>
         );
       }
       case "software_fallback":
+        if (forcedSoftware) return <Chip tone="pass">{t("gpu.configured")}</Chip>;
         return (
-          <Button disabled={notInit || forcedSoftware || w.nvidia_setup != null} busy={busy === "select"} onClick={() => select("Rendering software (SwiftShader)", { mode: "software" })}>
-            {forcedSoftware ? "Configurato" : "Forza software"}
+          <Button kind="tonal" disabled={notInit || nvidiaInstalled} busy={busy === "select"} onClick={() => select(t("gpu.label.software"), { mode: "software" })}>
+            {t("gpu.forceSoftware")}
           </Button>
         );
       default: {
         const mode: NvidiaMode = a.descriptor.kind === "nvidia_accelerated" ? "venus" : "prolapse";
         const modeArg = mode === "venus" ? "venus" : "nvidia-prolapse";
-        if (a.readiness === "unsupported") return <Chip tone="fail">non disponibile</Chip>;
-        if (w.nvidia_setup != null && w.nvidia_mode === mode) return <Chip tone="pass">Attivo (da verificare)</Chip>;
-        if (w.nvidia_setup != null)
+        if (a.readiness === "unsupported") return <Chip tone="fail">{t("gpu.unavailable")}</Chip>;
+        if (nvidiaInstalled && w.nvidia_mode === mode) return <Chip tone="pass">{t("gpu.active")}</Chip>;
+        if (nvidiaInstalled)
           return (
             <Button
-              kind="primary"
+              kind="filled"
               busy={busy === "select"}
               onClick={() =>
                 setPending({
-                  label: `${a.descriptor.name} (modalità ${modeArg})`,
-                  detail: "waydroid-nvidia-setup cambia la modalità e riavvia il container. Verrà chiesta la password di amministratore.",
+                  label: t("gpu.label.mode", { name: a.descriptor.name, mode: modeArg }),
+                  detail: t("dlg.gpu.modeNote"),
                   run: () => api.nvidiaSetMode(mode),
                 })
               }
             >
-              Attiva
+              {t("gpu.activate")}
             </Button>
           );
         return (
           <Button
-            kind="primary"
+            kind="filled"
+            icon={mdiDownload}
             busy={busy === "select"}
             onClick={() =>
               setPending({
-                label: `Installazione di waydroid-nvidia per ${a.descriptor.name}`,
-                detail:
-                  "DroidNative scarica il rilascio fissato (~260 MB) e ne verifica hash e commit, rimuove il pacchetto waydroid della distribuzione (immagini e dati Android restano), installa la Waydroid patchata con lo stack grafico NVIDIA e attiva la modalità scelta. Può richiedere diversi minuti. Verrà chiesta la password di amministratore.",
+                label: t("gpu.label.install", { name: a.descriptor.name }),
+                detail: t("dlg.gpu.installNote"),
                 run: () => api.nvidiaInstall(mode),
               })
             }
           >
-            Installa e attiva…
+            {t("gpu.installActivate")}
           </Button>
         );
       }
     }
   };
 
+  let current: string;
+  if (!w.initialized) current = t("gpu.cfg.notInit");
+  else if (nvidiaInstalled)
+    current = t("gpu.cfg.nvidia", {
+      tag: w.nvidia_stack?.tag ?? "",
+      mode: w.nvidia_mode === "prolapse" ? "nvidia-prolapse" : (w.nvidia_mode ?? "?"),
+      node: configured ?? "?",
+    });
+  else if (forcedSoftware) current = t("gpu.cfg.software");
+  else if (configured) current = t("gpu.cfg.node", { node: configured });
+  else current = t("gpu.cfg.auto");
+
+  const recommended = r.gpu_plan.assessments.find((a) => a.descriptor.kind === r.gpu_plan.recommended);
+
   return (
     <div className="page">
-      <h1>Backend GPU</h1>
+      <PageHead title={t("gpu.title")} />
       <Card
-        title="Configurazione attuale"
+        title={t("gpu.current")}
+        icon={mdiTune}
         actions={
-          <Button disabled={!w.initialized || w.nvidia_setup != null || (!configured && !forcedSoftware)} busy={busy === "select"} onClick={() => select("Scelta automatica di Waydroid", { mode: "auto" })}>
-            Ripristina automatico
+          <Button
+            kind="text"
+            icon={mdiRestart}
+            disabled={!w.initialized || nvidiaInstalled || (!configured && !forcedSoftware)}
+            busy={busy === "select"}
+            onClick={() => select(t("gpu.label.auto"), { mode: "auto" })}
+          >
+            {t("gpu.restoreAuto")}
           </Button>
         }
       >
-        <p>
-          {!w.initialized && "Android non è ancora inizializzato."}
-          {w.initialized && forcedSoftware && "Rendering software forzato (ro.hardware.egl=swiftshader)."}
-          {w.initialized && w.nvidia_setup && `waydroid-nvidia ${w.nvidia_stack?.tag ?? ""} in modalità ${w.nvidia_mode ?? "?"} (nodo ${configured ?? "?"}).`}
-          {w.initialized && !w.nvidia_setup && !forcedSoftware && configured && `Nodo GPU forzato: ${configured}.`}
-          {w.initialized && !w.nvidia_setup && !forcedSoftware && !configured && "Scelta automatica di Waydroid: primo nodo render non NVIDIA."}
+        <p className="body-l" style={{ margin: 0 }}>
+          {current}
         </p>
-        <p className="muted small">
-          La configurazione dice cosa Android dovrebbe usare. L'accelerazione è considerata attiva solo dopo la verifica del renderer reale nella Panoramica.
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          {t("gpu.cfg.note")}
         </p>
+        {busy === "select" && <div className="progress" />}
       </Card>
 
       <div className="recommend">
-        Consigliato per questo computer: <strong>{r.gpu_plan.assessments.find((a) => a.descriptor.kind === r.gpu_plan.recommended)?.descriptor.name}</strong> —{" "}
-        {r.gpu_plan.reason}
+        <Icon path={mdiLightbulbOnOutline} />
+        <div>
+          <div className="title-m">
+            {t("gpu.recommended")}: {recommended?.descriptor.name}
+          </div>
+          <div>{r.gpu_plan.reason}</div>
+        </div>
       </div>
 
       {r.gpu_plan.assessments.map((a) => {
-        const [rt, rl] = READINESS[a.readiness];
-        const [st, sl] = STABILITY[a.descriptor.stability];
+        const passing = a.checks.filter((c) => c.status === "pass").length;
+        const notable = a.checks.filter((c) => c.status !== "pass");
         return (
-          <Card
-            key={a.descriptor.kind}
-            title={
-              <>
-                {a.descriptor.name} <Chip tone={st}>{sl}</Chip> <Chip tone={rt}>{rl}</Chip>
-                {a.descriptor.kind === r.gpu_plan.recommended && <Chip tone="pass">Consigliato</Chip>}
-              </>
-            }
-            actions={actionFor(a)}
-          >
-            <p>{a.descriptor.summary}</p>
+          <Card key={a.descriptor.kind} icon={mdiCogOutline} title={a.descriptor.name} actions={actionFor(a)}>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <Chip tone={STABILITY_TONE[a.descriptor.stability]}>{t(`stability.${a.descriptor.stability}` as Key)}</Chip>
+              <Chip tone={READINESS_TONE[a.readiness]}>{t(`readiness.${a.readiness}` as Key)}</Chip>
+              {a.descriptor.kind === r.gpu_plan.recommended && <Chip tone="pass">{t("gpu.chip.recommended")}</Chip>}
+            </div>
+            <p style={{ marginTop: 0 }}>{a.descriptor.summary}</p>
             {a.target_device && (
-              <p className="muted small">
-                Dispositivo: {a.target_device} {a.target_render_node && `(${a.target_render_node})`}
-              </p>
+              <p className="small muted">{t("gpu.device", { dev: `${a.target_device}${a.target_render_node ? ` (${a.target_render_node})` : ""}` })}</p>
             )}
-            <CheckList checks={a.checks} />
+            {notable.length > 0 && <CheckList checks={notable} />}
             <details>
-              <summary>Requisiti e driver compatibili</summary>
+              <summary>
+                {t("gpu.checks", { n: a.checks.length })} · {passing} OK
+                <span className="chev" style={{ display: "inline-flex" }}>
+                  <Icon path={mdiChevronDown} size={20} />
+                </span>
+              </summary>
+              <CheckList checks={a.checks} />
               <div className="two-col">
                 <div>
-                  <h4>Requisiti</h4>
+                  <div className="label">{t("gpu.requirements")}</div>
                   <ul>{a.descriptor.requirements.map((x) => <li key={x}>{x}</li>)}</ul>
                 </div>
                 <div>
-                  <h4>Driver compatibili</h4>
+                  <div className="label">{t("gpu.drivers")}</div>
                   <ul>{a.descriptor.compatible_drivers.map((x) => <li key={x}>{x}</li>)}</ul>
                 </div>
               </div>
               <p className="small">
-                Renderer atteso: <code>{a.descriptor.expected_renderer}</code>
+                {t("gpu.expected")}: <code>{a.descriptor.expected_renderer}</code>
               </p>
-              {a.descriptor.upstream && <p className="small muted">Progetto: {a.descriptor.upstream}</p>}
+              {a.descriptor.upstream && (
+                <p className="small muted">
+                  {t("gpu.project")}: {a.descriptor.upstream}
+                </p>
+              )}
             </details>
           </Card>
         );
       })}
 
       {pending && (
-        <ConfirmModal
-          title="Cambiare backend GPU?"
-          body={
-            <>
-              <p>
-                <strong>{pending.label}</strong>
-              </p>
-              <p className="muted small">{pending.detail}</p>
-            </>
-          }
-          confirmLabel="Procedi"
-          onCancel={() => setPending(null)}
-          onConfirm={() => void apply(pending)}
-        />
+        <Dialog title={t("dlg.gpu.title")} confirmLabel={t("common.continue")} onCancel={() => setPending(null)} onConfirm={() => void apply(pending)}>
+          <p className="title-m" style={{ color: "var(--md-on-surface)" }}>
+            {pending.label}
+          </p>
+          <p>{pending.detail}</p>
+        </Dialog>
       )}
     </div>
   );

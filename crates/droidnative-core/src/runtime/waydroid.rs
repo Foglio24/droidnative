@@ -24,6 +24,7 @@ use crate::gpu::{classify_graphics, AccelVerdict};
 use crate::host::{Env, Probe};
 use crate::ini::Ini;
 use crate::privileged::{Escalator, PrivilegedOp};
+use crate::tr;
 
 pub const WAYDROID_WORK: &str = "/var/lib/waydroid";
 pub const WAYDROID_CFG: &str = "/var/lib/waydroid/waydroid.cfg";
@@ -205,7 +206,7 @@ pub fn parse_app_list(text: &str) -> Vec<AndroidApp> {
     let mut apps: Vec<AndroidApp> = Vec::new();
     for line in text.lines() {
         if let Some(name) = line.strip_prefix("Name: ") {
-            apps.push(AndroidApp { name: name.trim().to_string(), package: String::new(), categories: Vec::new() });
+            apps.push(AndroidApp { name: name.trim().to_string(), package: String::new(), categories: Vec::new(), icon: None });
         } else if let Some(pkg) = line.strip_prefix("packageName: ") {
             if let Some(app) = apps.last_mut() {
                 app.package = pkg.trim().to_string();
@@ -366,11 +367,11 @@ impl AndroidRuntime for WaydroidRuntime {
         }
         let bin = self.binary()?;
         self.cmd.spawn_detached(&bin, &["session", "start"], &self.session_log())?;
-        self.wait_for(self.start_timeout, "avvio della sessione Waydroid", || {
+        self.wait_for(self.start_timeout, &tr!("avvio della sessione Waydroid", "Waydroid session start"), || {
             self.status().ok().filter(|s| s.session == SessionState::Running)
         })?;
         // RUNNING means the container is up; Android needs a few more seconds to finish booting.
-        self.wait_for(self.start_timeout, "boot di Android (sys.boot_completed)", || {
+        self.wait_for(self.start_timeout, &tr!("boot di Android (sys.boot_completed)", "Android boot (sys.boot_completed)"), || {
             self.run(&["prop", "get", "sys.boot_completed"], Duration::from_secs(20))
                 .ok()
                 .filter(|o| o.stdout.trim() == "1")
@@ -380,7 +381,7 @@ impl AndroidRuntime for WaydroidRuntime {
 
     fn stop_session(&self) -> Result<(), RuntimeError> {
         self.run_checked(&["session", "stop"], Duration::from_secs(60))?;
-        self.wait_for(Duration::from_secs(30), "arresto della sessione", || {
+        self.wait_for(Duration::from_secs(30), &tr!("arresto della sessione", "session stop"), || {
             self.status().ok().filter(|s| s.session == SessionState::Stopped)
         })?;
         Ok(())
@@ -396,7 +397,13 @@ impl AndroidRuntime for WaydroidRuntime {
     fn list_apps(&self) -> Result<Vec<AndroidApp>, RuntimeError> {
         self.ensure_running()?;
         let out = self.run_checked(&["app", "list"], Duration::from_secs(30))?;
-        Ok(parse_app_list(&out.stdout))
+        let mut apps = parse_app_list(&out.stdout);
+        let icons = self.data_home.join("waydroid/data/icons");
+        for app in &mut apps {
+            let icon = icons.join(format!("{}.png", app.package));
+            app.icon = icon.is_file().then(|| icon.to_string_lossy().into_owned());
+        }
+        Ok(apps)
     }
 
     fn install_apk(&self, apk: &ApkInfo) -> Result<InstallOutcome, RuntimeError> {
@@ -409,25 +416,26 @@ impl AndroidRuntime for WaydroidRuntime {
         let started = std::time::SystemTime::now() - Duration::from_secs(1);
         let out = self.run(&["app", "install", &path_str], self.install_timeout)?;
         if out.timed_out {
-            return Err(RuntimeError::Timeout("installazione APK".into()));
+            return Err(RuntimeError::Timeout(tr!("installazione APK", "APK installation")));
         }
         let committed = self
-            .wait_for(self.verify_timeout, "conferma dell'installazione", || {
+            .wait_for(self.verify_timeout, &tr!("conferma dell'installazione", "install confirmation"), || {
                 (self.committed_since(&apk.package, started) && self.package_present(&apk.package).unwrap_or(false)).then_some(())
             })
             .is_ok();
         if !committed {
             let listed = self.package_present(&apk.package).unwrap_or(false);
-            return Err(RuntimeError::Verification(format!(
-                "{}: {}. Output di waydroid: {}",
-                apk.package,
-                if listed {
-                    "elencato ma l'installazione non è stata confermata da Android (ancora in compilazione o fallita)"
-                } else {
-                    "non risulta installato dopo `waydroid app install`"
-                },
-                if out.combined().is_empty() { "(vuoto)".to_string() } else { out.combined() }
-            )));
+            let why = if listed {
+                tr!(
+                    "elencato ma l'installazione non è stata confermata da Android (ancora in compilazione o fallita)",
+                    "listed, but Android did not confirm the installation (still compiling or failed)"
+                )
+            } else {
+                tr!("non risulta installato dopo `waydroid app install`", "not installed after `waydroid app install`")
+            };
+            let output = if out.combined().is_empty() { tr!("(vuoto)", "(empty)") } else { out.combined() };
+            let pkg = &apk.package;
+            return Err(RuntimeError::Verification(tr!("{pkg}: {why}. Output di waydroid: {output}", "{pkg}: {why}. waydroid output: {output}")));
         }
         Ok(InstallOutcome { package: apk.package.clone(), verified: true, was_update, output: out.combined() })
     }
@@ -444,15 +452,16 @@ impl AndroidRuntime for WaydroidRuntime {
             if !pm.success() {
                 return Err(RuntimeError::failed(&format!("pm uninstall {package}"), &pm));
             }
-            method = format!("pm uninstall (waydroid app remove: {})", out.combined().lines().last().unwrap_or("errore").trim());
+            method = format!("pm uninstall (waydroid app remove: {})", out.combined().lines().last().unwrap_or("error").trim());
         }
         let gone = self
-            .wait_for(self.verify_timeout, "rimozione del package", || {
+            .wait_for(self.verify_timeout, &tr!("rimozione del package", "package removal"), || {
                 (!self.desktop_entry(package).exists() && self.package_present(package).ok() == Some(false)).then_some(())
             })
             .is_ok();
         if !gone {
-            return Err(RuntimeError::Verification(format!("{package} è ancora installato. Output: {}", out.combined())));
+            let output = out.combined();
+            return Err(RuntimeError::Verification(tr!("{package} è ancora installato. Output: {output}", "{package} is still installed. Output: {output}")));
         }
         Ok(method)
     }
@@ -487,7 +496,7 @@ impl AndroidRuntime for WaydroidRuntime {
         self.ensure_running()?;
         let out = escalator.run(&PrivilegedOp::GraphicsDiagnostics)?;
         if !out.success() {
-            return Err(RuntimeError::failed("diagnostica grafica (dumpsys SurfaceFlinger, logcat)", &out));
+            return Err(RuntimeError::failed(&tr!("diagnostica grafica (dumpsys SurfaceFlinger, logcat)", "graphics diagnostics (dumpsys SurfaceFlinger, logcat)"), &out));
         }
         Ok(classify_graphics(&out.stdout))
     }
@@ -505,7 +514,7 @@ impl AndroidRuntime for WaydroidRuntime {
             out.push_str(&format!("== {WAYDROID_LOG} ==\n{}\n", tail(t)));
         }
         if out.is_empty() {
-            out.push_str("Nessun log disponibile.");
+            out.push_str(&tr!("Nessun log disponibile.", "No logs available."));
         }
         Ok(out)
     }

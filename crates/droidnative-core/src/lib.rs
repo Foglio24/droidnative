@@ -3,6 +3,7 @@
 pub mod apk;
 pub mod exec;
 pub mod fs;
+pub mod i18n;
 pub mod gpu;
 pub mod host;
 pub mod ini;

@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use droidnative_core::apk::inspect_apk;
 use droidnative_core::exec::SystemRunner;
 use droidnative_core::fs::HostFs;
 use droidnative_core::gpu::assess_backends;
 use droidnative_core::host::probe_local;
+use droidnative_core::i18n::{lang, Lang};
+use droidnative_core::tr;
 use droidnative_core::nvidia_stack::NvidiaMode;
 use droidnative_core::privileged::{escalator_from_env, execute, Escalator, GpuSelection, PrivilegedOp, SystemType};
 use droidnative_core::report::build_report;
@@ -18,7 +20,7 @@ use droidnative_core::runtime::AndroidRuntime;
 use droidnative_core::setup;
 
 #[derive(Parser)]
-#[command(name = "droidnative", version, about = "Applicazioni Android native su Linux Debian/Ubuntu")]
+#[command(name = "droidnative", version, about = "Native Android apps on Debian/Ubuntu Linux")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -33,70 +35,73 @@ enum Format {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Analizza il sistema e produce il report di compatibilità.
+    /// Analyze the system and print the compatibility report.
     Doctor {
         #[arg(long, value_enum, default_value = "text")]
         format: Format,
     },
-    /// Valuta i backend GPU disponibili.
+    /// Assess the available GPU backends.
     Gpu {
         #[arg(long)]
         json: bool,
     },
-    /// Cambia la modalità di waydroid-nvidia: `venus` (NVIDIA Accelerated) o `nvidia-prolapse` (Experimental).
+    /// Switch waydroid-nvidia mode: `venus` (NVIDIA Accelerated) or `nvidia-prolapse` (Experimental).
     NvidiaMode {
         #[arg(value_parser = parse_mode)]
         mode: NvidiaMode,
     },
-    /// Cambia il backend GPU di Android: un nodo /dev/dri/renderD*, `software` o `auto`
-    /// (richiede autenticazione; riavvia il container se attivo).
+    /// Change Android's GPU backend: a /dev/dri/renderD* node, `software` or `auto`
+    /// (needs authentication; restarts the container if running).
     GpuSelect {
         target: String,
     },
-    /// Passi di installazione guidata e loro stato.
+    /// Guided setup steps and their state.
     Setup {
-        /// Esegue il passo indicato (richiede autenticazione amministratore).
+        /// Run the given step (needs administrator authentication).
         #[arg(long)]
         run: Option<String>,
         #[arg(long)]
         json: bool,
     },
-    /// Stato del runtime Android.
+    /// Android runtime status.
     Status {
         #[arg(long)]
         json: bool,
     },
-    /// Controllo della sessione Android.
+    /// Control the Android session.
     Session {
         #[command(subcommand)]
         action: SessionAction,
     },
-    /// Mostra l'interfaccia Android completa in una finestra.
+    /// Show the full Android UI in a window.
     Ui,
-    /// Ispeziona un APK senza installarlo.
+    /// Inspect an APK without installing it.
     Apk {
         file: PathBuf,
         #[arg(long)]
         json: bool,
     },
-    /// Gestione delle applicazioni Android.
+    /// Manage Android apps.
     App {
         #[command(subcommand)]
         action: AppAction,
     },
-    /// Verifica il renderer reale usato da Android (richiede autenticazione).
+    /// Verify the renderer Android really uses (needs authentication).
     VerifyGpu {
         #[arg(long)]
         json: bool,
     },
-    /// Ultime righe dei log del runtime.
+    /// Last lines of the runtime logs.
     Logs {
         #[arg(short, long, default_value_t = 80)]
         lines: usize,
     },
-    /// Operazioni amministrative (solo tramite pkexec).
+    /// Administrative operations (through pkexec only).
     #[command(hide = true)]
     Priv {
+        /// Language of the messages (pkexec clears the caller's locale).
+        #[arg(long)]
+        lang: Option<String>,
         #[command(subcommand)]
         op: PrivCommand,
     },
@@ -160,7 +165,7 @@ enum PrivCommand {
 }
 
 fn parse_mode(s: &str) -> Result<NvidiaMode, String> {
-    NvidiaMode::from_arg(s).ok_or_else(|| format!("modalità sconosciuta {s:?}: usa venus o nvidia-prolapse"))
+    NvidiaMode::from_arg(s).ok_or_else(|| tr!("modalità sconosciuta {s:?}: usa venus o nvidia-prolapse", "unknown mode {s:?}: use venus or nvidia-prolapse"))
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -240,9 +245,11 @@ fn run(cli: Cli) -> Result<(), String> {
                             }
                         }
                     }
-                    let rec = droidnative_core::gpu::backends::descriptor(report.gpu_plan.recommended);
-                    println!("\nBackend GPU consigliato: {} — {}", rec.name, report.gpu_plan.reason);
-                    println!("Esito: {:?}", report.verdict);
+                    let name = droidnative_core::gpu::backends::descriptor(report.gpu_plan.recommended).name;
+                    let reason = &report.gpu_plan.reason;
+                    println!("\n{}", tr!("Backend GPU consigliato: {name} — {reason}", "Recommended GPU backend: {name} — {reason}"));
+                    let verdict = format!("{:?}", report.verdict);
+                    println!("{}", tr!("Esito: {verdict}", "Result: {verdict}"));
                 }
             }
         }
@@ -254,13 +261,15 @@ fn run(cli: Cli) -> Result<(), String> {
                 for a in &plan.assessments {
                     println!("\n{} [{:?}] — {:?}", a.descriptor.name, a.descriptor.stability, a.readiness);
                     if let Some(t) = &a.target_device {
-                        println!("  dispositivo: {t} {}", a.target_render_node.as_deref().unwrap_or(""));
+                        let node = a.target_render_node.as_deref().unwrap_or("");
+                        println!("  {}", tr!("dispositivo: {t} {node}", "device: {t} {node}"));
                     }
                     for c in &a.checks {
                         println!("  {} {}: {}", c.status.symbol(), c.label, c.detail);
                     }
                 }
-                println!("\nConsigliato: {:?} — {}", plan.recommended, plan.reason);
+                let (rec, reason) = (format!("{:?}", plan.recommended), &plan.reason);
+                println!("\n{}", tr!("Consigliato: {rec} — {reason}", "Recommended: {rec} — {reason}"));
             }
         }
         Command::NvidiaMode { mode } => {
@@ -269,7 +278,7 @@ fn run(cli: Cli) -> Result<(), String> {
             let out = escalator().run(&op).map_err(|x| e(&x))?;
             println!("{}", out.combined());
             if !out.success() {
-                return Err("cambio modalità fallito".into());
+                return Err(tr!("cambio modalità fallito", "mode switch failed"));
             }
         }
         Command::GpuSelect { target } => {
@@ -284,20 +293,27 @@ fn run(cli: Cli) -> Result<(), String> {
             if !out.success() {
                 return Err(out.combined());
             }
-            println!("Configurazione applicata. Verifica il renderer reale con `droidnative verify-gpu` dopo l'avvio.");
+            println!(
+                "{}",
+                tr!(
+                    "Configurazione applicata. Verifica il renderer reale con `droidnative verify-gpu` dopo l'avvio.",
+                    "Configuration applied. Check the real renderer with `droidnative verify-gpu` after starting Android."
+                )
+            );
         }
         Command::Setup { run, json } => {
             let host = probe_local();
             let plan = assess_backends(&host);
             let steps = setup::plan(&host, &plan);
             if let Some(id) = run {
-                let step = steps.iter().find(|s| s.id == id).ok_or_else(|| format!("passo sconosciuto: {id}"))?;
-                let op = step.op.as_ref().ok_or_else(|| format!("il passo {id} non è eseguibile: {}", step.detail))?;
+                let step = steps.iter().find(|s| s.id == id).ok_or_else(|| tr!("passo sconosciuto: {id}", "unknown step: {id}"))?;
+                let detail = &step.detail;
+                let op = step.op.as_ref().ok_or_else(|| tr!("il passo {id} non è eseguibile: {detail}", "step {id} cannot be run: {detail}"))?;
                 eprintln!("→ {}", op.description());
                 let out = escalator().run(op).map_err(|x| e(&x))?;
                 println!("{}", out.combined());
                 if !out.success() {
-                    return Err(format!("passo {id} fallito"));
+                    return Err(tr!("passo {id} fallito", "step {id} failed"));
                 }
             } else if json {
                 print_json(&steps);
@@ -312,7 +328,9 @@ fn run(cli: Cli) -> Result<(), String> {
             if json {
                 print_json(&st);
             } else {
-                println!("Sessione: {:?}\nContainer: {}\nIP: {}", st.session, st.container.unwrap_or("-".into()), st.ip_address.unwrap_or("-".into()));
+                let session = format!("{:?}", st.session);
+                println!("{}", tr!("Sessione: {session}", "Session: {session}"));
+                println!("Container: {}\nIP: {}", st.container.unwrap_or("-".into()), st.ip_address.unwrap_or("-".into()));
             }
         }
         Command::Session { action } => {
@@ -330,11 +348,14 @@ fn run(cli: Cli) -> Result<(), String> {
             if json {
                 print_json(&info);
             } else {
+                let q = |v: Option<String>| v.unwrap_or_else(|| "?".into());
+                let version = format!("{} ({})", q(info.version_name.clone()), q(info.version_code.map(|v| v.to_string())));
+                let abis = if info.native_abis.is_empty() { tr!("nessuna", "none") } else { info.native_abis.join(", ") };
                 println!("Package:    {}", info.package);
-                println!("Versione:   {} ({})", info.version_name.as_deref().unwrap_or("?"), info.version_code.map(|v| v.to_string()).unwrap_or("?".into()));
-                println!("SDK:        min {} · target {}", info.min_sdk.map(|v| v.to_string()).unwrap_or("?".into()), info.target_sdk.map(|v| v.to_string()).unwrap_or("?".into()));
-                println!("ABI:        {} → {:?}", if info.native_abis.is_empty() { "nessuna".into() } else { info.native_abis.join(", ") }, info.abi_compat);
-                println!("Permessi:   {}", info.permissions.len());
+                println!("{:<12}{version}", tr!("Versione:", "Version:"));
+                println!("SDK:        min {} · target {}", q(info.min_sdk.map(|v| v.to_string())), q(info.target_sdk.map(|v| v.to_string())));
+                println!("ABI:        {abis} → {:?}", info.abi_compat);
+                println!("{:<12}{}", tr!("Permessi:", "Permissions:"), info.permissions.len());
                 println!("SHA-256:    {}", info.sha256);
             }
         }
@@ -354,14 +375,23 @@ fn run(cli: Cli) -> Result<(), String> {
                 AppAction::Install { file } => {
                     let abi = probe_local().cpu.android_abi;
                     let info = inspect_apk(&file, abi.as_deref()).map_err(|x| e(&x))?;
-                    eprintln!("Installazione di {} (sha256 {})", info.package, &info.sha256[..16]);
+                    let (pkg, sha) = (&info.package, &info.sha256[..16]);
+                    eprintln!("{}", tr!("Installazione di {pkg} (sha256 {sha})", "Installing {pkg} (sha256 {sha})"));
                     let out = rt.install_apk(&info).map_err(|x| e(&x))?;
-                    println!("{} {} e verificato", out.package, if out.was_update { "aggiornato" } else { "installato" });
+                    let pkg = &out.package;
+                    println!(
+                        "{}",
+                        if out.was_update {
+                            tr!("{pkg} aggiornato e verificato", "{pkg} updated and verified")
+                        } else {
+                            tr!("{pkg} installato e verificato", "{pkg} installed and verified")
+                        }
+                    );
                 }
                 AppAction::Launch { package } => rt.launch(&package).map_err(|x| e(&x))?,
                 AppAction::Remove { package } => {
                     let method = rt.uninstall(&package, escalator().as_ref()).map_err(|x| e(&x))?;
-                    println!("{package} rimosso e verificato ({method})");
+                    println!("{}", tr!("{package} rimosso e verificato ({method})", "{package} removed and verified ({method})"));
                 }
             }
         }
@@ -375,17 +405,21 @@ fn run(cli: Cli) -> Result<(), String> {
                 if let Some(l) = &verdict.gles_line {
                     println!("  {l}");
                 }
-                println!("Visualizzazione: {:?} — {}", verdict.display.status, verdict.display.detail);
+                let (status, detail) = (format!("{:?}", verdict.display.status), &verdict.display.detail);
+                println!("{}", tr!("Visualizzazione: {status} — {detail}", "Display: {status} — {detail}"));
                 for l in &verdict.display.evidence {
                     println!("  {l}");
                 }
             }
         }
         Command::Logs { lines } => print!("{}", WaydroidRuntime::local().log_tail(lines).map_err(|x| e(&x))?),
-        Command::Priv { op } => {
+        Command::Priv { lang: requested, op } => {
+            if let Some(l) = requested.as_deref().and_then(Lang::from_code) {
+                droidnative_core::i18n::set_override(l);
+            }
             // SAFETY: geteuid has no preconditions.
             if unsafe { libc::geteuid() } != 0 {
-                return Err("i comandi priv vanno eseguiti come root (tramite pkexec)".into());
+                return Err(tr!("i comandi priv vanno eseguiti come root (tramite pkexec)", "priv commands must run as root (through pkexec)"));
             }
             let op = op.into_op();
             let out = execute(&op, &HostFs::real(), &SystemRunner).map_err(|x| format!("droidnative: {x}"))?;
@@ -396,11 +430,39 @@ fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// Help texts are written in English; in an Italian session they are swapped at runtime.
+const IT_ABOUT: &[(&str, &str)] = &[
+    ("doctor", "Analizza il sistema e produce il report di compatibilità."),
+    ("gpu", "Valuta i backend GPU disponibili."),
+    ("nvidia-mode", "Cambia la modalità di waydroid-nvidia: `venus` (NVIDIA Accelerated) o `nvidia-prolapse` (Experimental)."),
+    ("gpu-select", "Cambia il backend GPU di Android: un nodo /dev/dri/renderD*, `software` o `auto` (richiede autenticazione)."),
+    ("setup", "Passi di installazione guidata e loro stato."),
+    ("status", "Stato del runtime Android."),
+    ("session", "Controllo della sessione Android."),
+    ("ui", "Mostra l'interfaccia Android completa in una finestra."),
+    ("apk", "Ispeziona un APK senza installarlo."),
+    ("app", "Gestione delle applicazioni Android."),
+    ("verify-gpu", "Verifica il renderer reale usato da Android (richiede autenticazione)."),
+    ("logs", "Ultime righe dei log del runtime."),
+];
+
+fn command() -> clap::Command {
+    let mut cmd = Cli::command();
+    if lang() == Lang::It {
+        cmd = cmd.about("Applicazioni Android native su Linux Debian/Ubuntu");
+        for (name, about) in IT_ABOUT {
+            cmd = cmd.mut_subcommand(*name, |c| c.about(*about));
+        }
+    }
+    cmd
+}
+
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::from_arg_matches(&command().get_matches()).unwrap_or_else(|err| err.exit());
+    match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
-            eprintln!("errore: {msg}");
+            eprintln!("{} {msg}", droidnative_core::i18n::pick("errore:", "error:"));
             ExitCode::FAILURE
         }
     }

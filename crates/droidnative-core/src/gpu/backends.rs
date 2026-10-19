@@ -6,6 +6,7 @@ use super::{GpuDevice, GpuVendor, NvidiaModuleFlavor};
 use crate::host::{HostReport, SessionKind};
 use crate::nvidia_stack::NvidiaMode;
 use crate::report::{Check, CheckStatus};
+use crate::tr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +16,9 @@ pub enum GpuBackendKind {
     NvidiaExperimental,
     SoftwareFallback,
 }
+
+pub const ALL_KINDS: [GpuBackendKind; 4] =
+    [GpuBackendKind::MesaNative, GpuBackendKind::NvidiaAccelerated, GpuBackendKind::NvidiaExperimental, GpuBackendKind::SoftwareFallback];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,80 +31,92 @@ pub enum Stability {
 #[derive(Debug, Clone, Serialize)]
 pub struct BackendDescriptor {
     pub kind: GpuBackendKind,
-    pub name: &'static str,
-    pub summary: &'static str,
+    pub name: String,
+    pub summary: String,
     pub stability: Stability,
-    pub requirements: &'static [&'static str],
-    pub compatible_drivers: &'static [&'static str],
+    pub requirements: Vec<String>,
+    pub compatible_drivers: Vec<String>,
     pub upstream: Option<&'static str>,
     /// What the SurfaceFlinger `GLES:` line looks like when this backend works.
     pub expected_renderer: &'static str,
 }
 
-pub const DESCRIPTORS: &[BackendDescriptor] = &[
-    BackendDescriptor {
-        kind: GpuBackendKind::MesaNative,
-        name: "Mesa Native",
-        summary: "Android usa direttamente il nodo render della GPU tramite Mesa (gralloc gbm + EGL mesa).",
-        stability: Stability::Stable,
-        requirements: &[
-            "GPU AMD o Intel con driver kernel amdgpu/radeon/i915/xe",
-            "Nodo /dev/dri/renderD* accessibile",
-            "Compositor sulla stessa GPU, oppure import dmabuf cross-GPU funzionante",
-            "Sessione Wayland",
-        ],
-        compatible_drivers: &["amdgpu (RadeonSI, RADV)", "radeon", "i915 (Iris, ANV)", "xe (Intel Arc/Xe2)"],
-        upstream: Some("https://github.com/waydroid/waydroid"),
-        expected_renderer: "… (radeonsi …) / Mesa Intel …, OpenGL ES 3.2 Mesa …",
-    },
-    BackendDescriptor {
-        kind: GpuBackendKind::NvidiaAccelerated,
-        name: "NVIDIA Accelerated",
-        summary: "Vulkan di Android inoltrato via Mesa Venus a un render server host sul driver NVIDIA; GL ES tramite ANGLE.",
-        stability: Stability::Stable,
-        requirements: &[
-            "GPU NVIDIA Turing (RTX 20 / GTX 16) o successiva",
-            "Modulo kernel NVIDIA open (DMA-BUF)",
-            "Driver ≥ 595.71 con nvidia-drm.modeset=1",
-            "Compositor Wayland in esecuzione sulla GPU NVIDIA",
-            "Accesso a /dev/udmabuf",
-            "waydroid-nvidia (ramo main) installato",
-        ],
-        compatible_drivers: &["nvidia-open ≥ 595.71 (consigliato 610+)"],
-        upstream: Some("https://github.com/Shiro836/waydroid-nvidia"),
-        expected_renderer: "ANGLE (NVIDIA, Vulkan … (Virtio-GPU Venus (NVIDIA GeForce …)))",
-    },
-    BackendDescriptor {
-        kind: GpuBackendKind::NvidiaExperimental,
-        name: "NVIDIA Experimental",
-        summary: "Driver open-source (NVK + backend NVIDIA) eseguito direttamente dentro Android, senza proxy; decodifica video HW.",
-        stability: Stability::Experimental,
-        requirements: &[
-            "GPU NVIDIA Maxwell 2 o successiva (Waydroid confermato su RTX 50)",
-            "Driver 550–615 (modulo open o chiuso; 550.107 rifiutato)",
-            "nvidia-drm.modeset=1",
-            "Compositor Wayland sulla GPU NVIDIA",
-            "Immagine Android 13 ufficiale (LineageOS 20)",
-            "waydroid-nvidia ramo public-test installato",
-        ],
-        compatible_drivers: &["nvidia 615 open (✅ upstream)", "nvidia 580–610 open (🧪)", "nvidia 550–610 closed (🧪)"],
-        upstream: Some("https://github.com/Shiro836/waydroid-nvidia/tree/public-test"),
-        expected_renderer: "ANGLE (NVIDIA, Vulkan … (NVIDIA GeForce …))",
-    },
-    BackendDescriptor {
-        kind: GpuBackendKind::SoftwareFallback,
-        name: "Software Fallback",
-        summary: "Rendering CPU con SwiftShader. Sempre disponibile, mai considerato accelerato.",
-        stability: Stability::Fallback,
-        requirements: &["Nessun requisito GPU"],
-        compatible_drivers: &["qualsiasi"],
-        upstream: None,
-        expected_renderer: "Google SwiftShader",
-    },
-];
-
-pub fn descriptor(kind: GpuBackendKind) -> &'static BackendDescriptor {
-    DESCRIPTORS.iter().find(|d| d.kind == kind).expect("every kind has a descriptor")
+/// Descriptor in the current language.
+pub fn descriptor(kind: GpuBackendKind) -> BackendDescriptor {
+    let v = |items: &[String]| items.to_vec();
+    match kind {
+        GpuBackendKind::MesaNative => BackendDescriptor {
+            kind,
+            name: "Mesa Native".into(),
+            summary: tr!(
+                "Android usa direttamente il nodo render della GPU tramite Mesa (gralloc gbm + EGL mesa).",
+                "Android renders directly on the GPU render node through Mesa (gbm gralloc + Mesa EGL)."
+            ),
+            stability: Stability::Stable,
+            requirements: v(&[
+                tr!("GPU AMD o Intel con driver kernel amdgpu/radeon/i915/xe", "AMD or Intel GPU with the amdgpu/radeon/i915/xe kernel driver"),
+                tr!("Nodo /dev/dri/renderD* accessibile", "Accessible /dev/dri/renderD* node"),
+                tr!("Compositor sulla stessa GPU, oppure import dmabuf cross-GPU funzionante", "Compositor on the same GPU, or working cross-GPU dmabuf import"),
+                tr!("Sessione Wayland", "Wayland session"),
+            ]),
+            compatible_drivers: v(&["amdgpu (RadeonSI, RADV)".into(), "radeon".into(), "i915 (Iris, ANV)".into(), "xe (Intel Arc/Xe2)".into()]),
+            upstream: Some("https://github.com/waydroid/waydroid"),
+            expected_renderer: "… (radeonsi …) / Mesa Intel …, OpenGL ES 3.2 Mesa …",
+        },
+        GpuBackendKind::NvidiaAccelerated => BackendDescriptor {
+            kind,
+            name: "NVIDIA Accelerated".into(),
+            summary: tr!(
+                "Vulkan di Android inoltrato via Mesa Venus a un render server host sul driver NVIDIA; GL ES tramite ANGLE.",
+                "Android's Vulkan is forwarded through Mesa Venus to a host render server on the NVIDIA driver; GL ES via ANGLE."
+            ),
+            stability: Stability::Stable,
+            requirements: v(&[
+                tr!("GPU NVIDIA Turing (RTX 20 / GTX 16) o successiva", "NVIDIA Turing (RTX 20 / GTX 16) or newer GPU"),
+                tr!("Modulo kernel NVIDIA open (DMA-BUF)", "Open NVIDIA kernel module (DMA-BUF)"),
+                tr!("Driver ≥ 595.71 con nvidia-drm.modeset=1", "Driver ≥ 595.71 with nvidia-drm.modeset=1"),
+                tr!("Compositor Wayland in esecuzione sulla GPU NVIDIA", "Wayland compositor running on the NVIDIA GPU"),
+                tr!("Accesso a /dev/udmabuf", "Access to /dev/udmabuf"),
+                tr!("waydroid-nvidia installato in modalità venus", "waydroid-nvidia installed in venus mode"),
+            ]),
+            compatible_drivers: v(&[tr!("nvidia-open ≥ 595.71 (consigliato 610+)", "nvidia-open ≥ 595.71 (610+ recommended)")]),
+            upstream: Some("https://github.com/Shiro836/waydroid-nvidia"),
+            expected_renderer: "ANGLE (NVIDIA, Vulkan … (Virtio-GPU Venus (NVIDIA GeForce …)))",
+        },
+        GpuBackendKind::NvidiaExperimental => BackendDescriptor {
+            kind,
+            name: "NVIDIA Experimental".into(),
+            summary: tr!(
+                "Driver open-source (NVK + backend NVIDIA) eseguito direttamente dentro Android, senza proxy; decodifica video HW.",
+                "Open-source driver (NVK + NVIDIA backend) running directly inside Android, no proxy; hardware video decode."
+            ),
+            stability: Stability::Experimental,
+            requirements: v(&[
+                tr!("GPU NVIDIA Maxwell 2 o successiva (Waydroid confermato su RTX 50)", "NVIDIA Maxwell 2 or newer GPU (Waydroid confirmed on RTX 50)"),
+                tr!("Driver 550–615 (modulo open o chiuso; 550.107 rifiutato)", "Driver 550–615 (open or closed module; 550.107 refused)"),
+                "nvidia-drm.modeset=1".into(),
+                tr!("Compositor Wayland sulla GPU NVIDIA", "Wayland compositor on the NVIDIA GPU"),
+                tr!("Immagine Android 13 ufficiale (LineageOS 20)", "Official Android 13 image (LineageOS 20)"),
+                tr!("waydroid-nvidia installato in modalità nvidia-prolapse", "waydroid-nvidia installed in nvidia-prolapse mode"),
+            ]),
+            compatible_drivers: v(&["nvidia 615 open (✅ upstream)".into(), "nvidia 580–610 open (🧪)".into(), "nvidia 550–610 closed (🧪)".into()]),
+            upstream: Some("https://github.com/Shiro836/waydroid-nvidia/tree/public-test"),
+            expected_renderer: "ANGLE (NVIDIA, Vulkan … (NVIDIA GeForce … (NVK …)))",
+        },
+        GpuBackendKind::SoftwareFallback => BackendDescriptor {
+            kind,
+            name: "Software Fallback".into(),
+            summary: tr!(
+                "Rendering CPU con SwiftShader. Sempre disponibile, mai considerato accelerato.",
+                "CPU rendering with SwiftShader. Always available, never reported as accelerated."
+            ),
+            stability: Stability::Fallback,
+            requirements: v(&[tr!("Nessun requisito GPU", "No GPU requirement")]),
+            compatible_drivers: v(&[tr!("qualsiasi", "any")]),
+            upstream: None,
+            expected_renderer: "Google SwiftShader",
+        },
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,38 +202,62 @@ fn readiness(checks: &[Check]) -> Readiness {
 }
 
 fn common_runtime_checks(r: &HostReport, checks: &mut Vec<Check>) {
+    let binder = tr!("Binder nel kernel", "Kernel binder");
     if r.kernel.binder.usable() {
-        checks.push(Check::pass("binder", "Binder nel kernel", "disponibile"));
+        checks.push(Check::pass("binder", &binder, tr!("disponibile", "available")));
     } else {
-        checks.push(Check::fail("binder", "Binder nel kernel", "CONFIG_ANDROID_BINDERFS assente").remedy("Usa un kernel con binder (es. linux-generic Ubuntu o linux-image Debian ≥ 6.x)"));
+        checks.push(
+            Check::fail("binder", &binder, tr!("CONFIG_ANDROID_BINDERFS assente", "CONFIG_ANDROID_BINDERFS missing"))
+                .remedy(tr!("Usa un kernel con binder (es. linux-generic Ubuntu o linux-image Debian ≥ 6.x)", "Use a kernel with binder (e.g. Ubuntu linux-generic or Debian linux-image ≥ 6.x)")),
+        );
     }
     if r.waydroid.installed {
-        checks.push(Check::pass("waydroid", "Waydroid", r.waydroid.version.as_deref().unwrap_or("installato")));
+        checks.push(Check::pass("waydroid", "Waydroid", r.waydroid.version.clone().unwrap_or_else(|| tr!("installato", "installed"))));
     } else {
-        checks.push(Check::missing("waydroid", "Waydroid", "non installato").remedy("Installazione guidata da DroidNative (repository ufficiale repo.waydro.id)"));
+        checks.push(
+            Check::missing("waydroid", "Waydroid", tr!("non installato", "not installed"))
+                .remedy(tr!("Installazione guidata da DroidNative (repository ufficiale repo.waydro.id)", "Guided setup in DroidNative (official repo.waydro.id repository)")),
+        );
     }
 }
 
 fn session_check(r: &HostReport, required: bool) -> Check {
+    let label = tr!("Sessione Wayland", "Wayland session");
     match r.session.kind {
-        SessionKind::Wayland => Check::pass("wayland", "Sessione Wayland", r.session.compositor.as_deref().unwrap_or("attiva")),
-        SessionKind::X11 if !required => Check::warn("wayland", "Sessione Wayland", "sessione X11: serve un compositor Wayland annidato (weston/cage)"),
-        _ => Check::fail("wayland", "Sessione Wayland", "richiesta una sessione Wayland").remedy("Accedi con una sessione Wayland (es. «GNOME» invece di «GNOME su Xorg»)"),
+        SessionKind::Wayland => Check::pass("wayland", &label, r.session.compositor.clone().unwrap_or_else(|| tr!("attiva", "active"))),
+        SessionKind::X11 if !required => Check::warn(
+            "wayland",
+            &label,
+            tr!("sessione X11: serve un compositor Wayland annidato (weston/cage)", "X11 session: a nested Wayland compositor (weston/cage) is needed"),
+        ),
+        _ => Check::fail("wayland", &label, tr!("richiesta una sessione Wayland", "a Wayland session is required"))
+            .remedy(tr!("Accedi con una sessione Wayland (es. «GNOME» invece di «GNOME su Xorg»)", "Log in with a Wayland session (e.g. “GNOME” instead of “GNOME on Xorg”)")),
     }
 }
 
 fn nvidia_display_check(r: &HostReport) -> Check {
+    let label = tr!("Compositor sulla GPU NVIDIA", "Compositor on the NVIDIA GPU");
     match r.gpu.display_gpu() {
         Some(d) if d.vendor == GpuVendor::Nvidia => {
-            Check::pass("compositor_gpu", "Compositor sulla GPU NVIDIA", &format!("schermo su {} ({})", d.display_name(), d.connected_outputs.join(", ")))
+            let (name, outs) = (d.display_name(), d.connected_outputs.join(", "));
+            Check::pass("compositor_gpu", &label, tr!("schermo su {name} ({outs})", "display on {name} ({outs})"))
         }
-        Some(d) => Check::fail(
-            "compositor_gpu",
-            "Compositor sulla GPU NVIDIA",
-            &format!("lo schermo è collegato a {}: il compositor non può mostrare i buffer NVIDIA block-linear", d.display_name()),
-        )
-        .remedy("Collega il monitor alla scheda NVIDIA, oppure esegui Waydroid in gamescope sulla GPU NVIDIA (non funziona su portatili ibridi Intel+NVIDIA)"),
-        None => Check::unknown("compositor_gpu", "Compositor sulla GPU NVIDIA", "nessuna uscita video collegata rilevata"),
+        Some(d) => {
+            let name = d.display_name();
+            Check::fail(
+                "compositor_gpu",
+                &label,
+                tr!(
+                    "lo schermo è collegato a {name}: il compositor non può mostrare i buffer NVIDIA block-linear",
+                    "the display is connected to {name}: the compositor cannot show NVIDIA block-linear buffers"
+                ),
+            )
+            .remedy(tr!(
+                "Collega il monitor alla scheda NVIDIA, oppure esegui Waydroid in gamescope sulla GPU NVIDIA (non funziona su portatili ibridi Intel+NVIDIA)",
+                "Connect the monitor to the NVIDIA card, or run Waydroid in gamescope on the NVIDIA GPU (does not work on hybrid Intel+NVIDIA laptops)"
+            ))
+        }
+        None => Check::unknown("compositor_gpu", &label, tr!("nessuna uscita video collegata rilevata", "no connected video output detected")),
     }
 }
 
@@ -226,46 +266,53 @@ fn assess_mesa(r: &HostReport) -> BackendAssessment {
     let display = r.gpu.display_gpu();
     // Prefer the Mesa GPU that drives the display; otherwise the first Mesa-capable one.
     let target = r.gpu.mesa_devices().find(|d| d.drives_display()).or_else(|| r.gpu.mesa_devices().next());
+    let mesa_gpu = tr!("GPU compatibile Mesa", "Mesa-compatible GPU");
+    let same_gpu = tr!("Compositor sulla stessa GPU", "Compositor on the same GPU");
 
     match target {
         Some(dev) => {
             checks.push(Check::pass(
                 "mesa_gpu",
-                "GPU compatibile Mesa",
-                &format!("{} ({}) → {}", dev.display_name(), dev.kernel_driver.as_deref().unwrap_or("?"), dev.render_node.as_deref().unwrap_or("?")),
+                &mesa_gpu,
+                format!("{} ({}) → {}", dev.display_name(), dev.kernel_driver.as_deref().unwrap_or("?"), dev.render_node.as_deref().unwrap_or("?")),
             ));
+            let access = tr!("Accesso al nodo render", "Render node access");
             if dev.render_node_accessible {
-                checks.push(Check::pass("render_access", "Accesso al nodo render", "consentito all'utente"));
+                checks.push(Check::pass("render_access", &access, tr!("consentito all'utente", "allowed for the user")));
             } else {
-                checks.push(Check::warn("render_access", "Accesso al nodo render", "l'utente non può aprire il nodo (gruppo render/ACL)"));
+                checks.push(Check::warn("render_access", &access, tr!("l'utente non può aprire il nodo (gruppo render/ACL)", "the user cannot open the node (render group/ACL)")));
             }
             match display {
                 Some(d) if d.pci_slot == dev.pci_slot => {
-                    checks.push(Check::pass("same_gpu", "Compositor sulla stessa GPU", "rendering e composizione sulla stessa GPU"))
+                    checks.push(Check::pass("same_gpu", &same_gpu, tr!("rendering e composizione sulla stessa GPU", "rendering and compositing on the same GPU")))
                 }
-                Some(d) if d.vendor == GpuVendor::Nvidia => checks.push(
-                    Check::fail(
-                        "same_gpu",
-                        "Compositor sulla stessa GPU",
-                        &format!(
-                            "lo schermo è su {}: il compositor non riesce a importare i buffer di {} (il driver NVIDIA importa dmabuf LINEAR di altri vendor solo come GL_TEXTURE_EXTERNAL_OES). \
-                             Verificato su GNOME/Mutter: «failed to import supplied dmabufs: Could not bind the given EGLImage to a CoglTexture2D», poi crash dell'hwcomposer appena Android apre una finestra.",
-                            d.display_name(),
-                            dev.display_name()
-                        ),
+                Some(d) if d.vendor == GpuVendor::Nvidia => {
+                    let (disp, rend) = (d.display_name(), dev.display_name());
+                    checks.push(
+                        Check::fail(
+                            "same_gpu",
+                            &same_gpu,
+                            tr!(
+                                "lo schermo è su {disp}: il compositor non riesce a importare i buffer di {rend} (il driver NVIDIA importa dmabuf LINEAR di altri vendor solo come GL_TEXTURE_EXTERNAL_OES). Verificato su GNOME/Mutter: «failed to import supplied dmabufs: Could not bind the given EGLImage to a CoglTexture2D», poi crash dell'hwcomposer appena Android apre una finestra.",
+                                "the display is on {disp}: the compositor cannot import {rend}'s buffers (the NVIDIA driver imports other vendors' LINEAR dmabufs only as GL_TEXTURE_EXTERNAL_OES). Seen on GNOME/Mutter: “failed to import supplied dmabufs: Could not bind the given EGLImage to a CoglTexture2D”, then the hwcomposer crashes as soon as Android opens a window."
+                            ),
+                        )
+                        .remedy(tr!(
+                            "Collega il monitor alla GPU AMD/Intel, oppure usa un backend NVIDIA o il fallback software",
+                            "Connect the monitor to the AMD/Intel GPU, or use an NVIDIA backend or the software fallback"
+                        )),
                     )
-                    .remedy("Collega il monitor alla GPU AMD/Intel, oppure usa un backend NVIDIA o il fallback software"),
-                ),
-                Some(d) => checks.push(Check::info(
-                    "same_gpu",
-                    "Compositor sulla stessa GPU",
-                    &format!("PRIME tra {} e {}: generalmente supportato da Mesa", d.display_name(), dev.display_name()),
-                )),
-                None => checks.push(Check::unknown("same_gpu", "Compositor sulla stessa GPU", "GPU del display non determinata")),
+                }
+                Some(d) => {
+                    let (disp, rend) = (d.display_name(), dev.display_name());
+                    checks.push(Check::info("same_gpu", &same_gpu, tr!("PRIME tra {disp} e {rend}: generalmente supportato da Mesa", "PRIME between {disp} and {rend}: generally supported by Mesa")))
+                }
+                None => checks.push(Check::unknown("same_gpu", &same_gpu, tr!("GPU del display non determinata", "display GPU not determined"))),
             }
         }
         None => checks.push(
-            Check::fail("mesa_gpu", "GPU compatibile Mesa", "nessuna GPU AMD/Intel con nodo render").remedy("Usa un backend NVIDIA o il fallback software"),
+            Check::fail("mesa_gpu", &mesa_gpu, tr!("nessuna GPU AMD/Intel con nodo render", "no AMD/Intel GPU with a render node"))
+                .remedy(tr!("Usa un backend NVIDIA o il fallback software", "Use an NVIDIA backend or the software fallback")),
         ),
     }
     checks.push(session_check(r, false));
@@ -273,17 +320,27 @@ fn assess_mesa(r: &HostReport) -> BackendAssessment {
     if let Some(cfg) = r.waydroid.config.as_ref() {
         let forced_sw = cfg.properties.iter().any(|(k, v)| k == "ro.hardware.egl" && v == "swiftshader");
         if forced_sw {
-            checks.push(Check::missing("cfg_override", "Configurazione Waydroid", "ro.hardware.egl=swiftshader forza il rendering software").remedy("Seleziona Mesa Native in DroidNative per rimuovere l'override"));
+            checks.push(
+                Check::missing("cfg_override", tr!("Configurazione Waydroid", "Waydroid configuration"), tr!("ro.hardware.egl=swiftshader forza il rendering software", "ro.hardware.egl=swiftshader forces software rendering"))
+                    .remedy(tr!("Seleziona Mesa Native in DroidNative per rimuovere l'override", "Select Mesa Native in DroidNative to remove the override")),
+            );
         }
-        match (&cfg.drm_device, target.and_then(|t| t.render_node.as_ref())) {
-            (Some(cur), Some(want)) if cur == want => checks.push(Check::pass("drm_device", "Nodo GPU configurato", cur)),
-            (Some(cur), Some(want)) => checks.push(Check::missing("drm_device", "Nodo GPU configurato", &format!("{cur} invece di {want}"))),
-            (None, Some(want)) => checks.push(Check::info("drm_device", "Nodo GPU configurato", &format!("automatico (Waydroid sceglierà il primo nodo non NVIDIA: {want})"))),
+        let node = tr!("Nodo GPU configurato", "Configured GPU node");
+        // With waydroid-nvidia, drm_device points at the NVIDIA node by design: not a Mesa setting.
+        let drm = if r.waydroid.nvidia_setup.is_some() { None } else { cfg.drm_device.as_ref() };
+        match (drm, target.and_then(|t| t.render_node.as_ref())) {
+            (Some(cur), Some(want)) if cur == want => checks.push(Check::pass("drm_device", &node, cur)),
+            (Some(cur), Some(want)) => checks.push(Check::missing("drm_device", &node, tr!("{cur} invece di {want}", "{cur} instead of {want}"))),
+            (None, Some(want)) if r.waydroid.nvidia_setup.is_none() => checks.push(Check::info(
+                "drm_device",
+                &node,
+                tr!("automatico (Waydroid sceglierà il primo nodo non NVIDIA: {want})", "automatic (Waydroid will pick the first non-NVIDIA node: {want})"),
+            )),
             _ => {}
         }
     }
     BackendAssessment {
-        descriptor: descriptor(GpuBackendKind::MesaNative).clone(),
+        descriptor: descriptor(GpuBackendKind::MesaNative),
         readiness: readiness(&checks),
         target_device: target.map(|d| d.display_name()),
         target_render_node: target.and_then(|d| d.render_node.clone()),
@@ -292,8 +349,12 @@ fn assess_mesa(r: &HostReport) -> BackendAssessment {
 }
 
 fn nvidia_driver_checks(r: &HostReport, checks: &mut Vec<Check>, experimental: bool) {
+    let drv_label = tr!("Driver NVIDIA", "NVIDIA driver");
     let Some(drv) = r.gpu.nvidia.as_ref() else {
-        checks.push(Check::fail("nvidia_driver", "Driver NVIDIA", "driver proprietario NVIDIA non caricato (nouveau?)").remedy("Installa nvidia-driver-<versione>-open"));
+        checks.push(
+            Check::fail("nvidia_driver", &drv_label, tr!("driver proprietario NVIDIA non caricato (nouveau?)", "proprietary NVIDIA driver not loaded (nouveau?)"))
+                .remedy(tr!("Installa nvidia-driver-<versione>-open", "Install nvidia-driver-<version>-open")),
+        );
         return;
     };
     let version = drv.version.clone().unwrap_or_else(|| "?".into());
@@ -301,32 +362,45 @@ fn nvidia_driver_checks(r: &HostReport, checks: &mut Vec<Check>, experimental: b
     let flavor = drv.module_flavor;
 
     if experimental {
-        let detail = format!("{version} ({})", if flavor == NvidiaModuleFlavor::Open { "modulo open" } else { "modulo chiuso" });
+        let module = if flavor == NvidiaModuleFlavor::Open { tr!("modulo open", "open module") } else { tr!("modulo chiuso", "closed module") };
+        let detail = format!("{version} ({module})");
         match (tuple, flavor) {
-            (Some((major, _)), NvidiaModuleFlavor::Open) if major >= 615 => checks.push(Check::pass("nvidia_driver", "Driver NVIDIA", &format!("{detail}: ✅ in upstream"))),
-            (Some((550, 107)), _) => checks.push(Check::fail("nvidia_driver", "Driver NVIDIA", &format!("{detail}: versione rifiutata da upstream"))),
+            (Some((major, _)), NvidiaModuleFlavor::Open) if major >= 615 => checks.push(Check::pass("nvidia_driver", &drv_label, format!("{detail}: ✅ upstream"))),
+            (Some((550, 107)), _) => checks.push(Check::fail("nvidia_driver", &drv_label, tr!("{detail}: versione rifiutata da upstream", "{detail}: version refused upstream"))),
             // Upstream table: open 580–610 and closed 550–610 are 🧪; newer closed builds are untested but accepted.
-            (Some((major, _)), _) if major >= 550 => {
-                checks.push(Check::warn("nvidia_driver", "Driver NVIDIA", &format!("{detail}: 🧪 test driver superati, non provato in Waydroid")))
-            }
-            _ => checks.push(Check::fail("nvidia_driver", "Driver NVIDIA", &format!("{detail}: non supportato (serve ≥ 550)"))),
+            (Some((major, _)), _) if major >= 550 => checks.push(Check::warn(
+                "nvidia_driver",
+                &drv_label,
+                tr!("{detail}: 🧪 test driver superati, non provato in Waydroid", "{detail}: 🧪 driver tests pass, not tried in Waydroid"),
+            )),
+            _ => checks.push(Check::fail("nvidia_driver", &drv_label, tr!("{detail}: non supportato (serve ≥ 550)", "{detail}: not supported (≥ 550 needed)"))),
         }
     } else {
+        let open = tr!("Modulo kernel open", "Open kernel module");
         if flavor == NvidiaModuleFlavor::Open {
-            checks.push(Check::pass("nvidia_module", "Modulo kernel open", "open-gpu-kernel-modules (DMA-BUF disponibile)"));
+            checks.push(Check::pass("nvidia_module", &open, tr!("open-gpu-kernel-modules (DMA-BUF disponibile)", "open-gpu-kernel-modules (DMA-BUF available)")));
         } else {
-            checks.push(Check::fail("nvidia_module", "Modulo kernel open", "modulo chiuso: nessun export DMA-BUF").remedy("Installa la variante -open del driver (es. nvidia-driver-615-open)"));
+            checks.push(
+                Check::fail("nvidia_module", &open, tr!("modulo chiuso: nessun export DMA-BUF", "closed module: no DMA-BUF export"))
+                    .remedy(tr!("Installa la variante -open del driver (es. nvidia-driver-615-open)", "Install the -open variant of the driver (e.g. nvidia-driver-615-open)")),
+            );
         }
         match tuple {
             Some(t) if t >= (595, 71) => checks.push(Check::pass("nvidia_driver", "Driver ≥ 595.71", &version)),
-            Some(_) => checks.push(Check::fail("nvidia_driver", "Driver ≥ 595.71", &format!("{version} troppo vecchio")).remedy("Aggiorna al driver 610 o successivo")),
-            None => checks.push(Check::unknown("nvidia_driver", "Driver ≥ 595.71", "versione non leggibile")),
+            Some(_) => checks.push(
+                Check::fail("nvidia_driver", "Driver ≥ 595.71", tr!("{version} troppo vecchio", "{version} is too old"))
+                    .remedy(tr!("Aggiorna al driver 610 o successivo", "Update to driver 610 or newer")),
+            ),
+            None => checks.push(Check::unknown("nvidia_driver", "Driver ≥ 595.71", tr!("versione non leggibile", "version not readable"))),
         }
     }
     match drv.modeset {
-        Some(true) => checks.push(Check::pass("modeset", "nvidia-drm.modeset=1", "attivo")),
-        Some(false) => checks.push(Check::fail("modeset", "nvidia-drm.modeset=1", "disattivato: niente DMA-BUF né sync_fd").remedy("Aggiungi nvidia-drm.modeset=1 ai parametri del kernel e riavvia")),
-        None => checks.push(Check::unknown("modeset", "nvidia-drm.modeset=1", "parametro non leggibile")),
+        Some(true) => checks.push(Check::pass("modeset", "nvidia-drm.modeset=1", tr!("attivo", "on"))),
+        Some(false) => checks.push(
+            Check::fail("modeset", "nvidia-drm.modeset=1", tr!("disattivato: niente DMA-BUF né sync_fd", "off: no DMA-BUF and no sync_fd"))
+                .remedy(tr!("Aggiungi nvidia-drm.modeset=1 ai parametri del kernel e riavvia", "Add nvidia-drm.modeset=1 to the kernel parameters and reboot")),
+        ),
+        None => checks.push(Check::unknown("modeset", "nvidia-drm.modeset=1", tr!("parametro non leggibile", "parameter not readable"))),
     }
 }
 
@@ -334,87 +408,116 @@ fn assess_nvidia(r: &HostReport, experimental: bool) -> BackendAssessment {
     let kind = if experimental { GpuBackendKind::NvidiaExperimental } else { GpuBackendKind::NvidiaAccelerated };
     let mut checks = Vec::new();
     let dev = r.gpu.nvidia_device();
+    let gpu_label = tr!("GPU NVIDIA supportata", "Supported NVIDIA GPU");
     match dev {
         Some(d) => {
             let generation = nvidia_generation(d);
-            let gen_label = format!("{} — architettura {:?}", d.display_name(), generation);
+            let name = d.display_name();
+            let gen_label = tr!("{name} — architettura {generation:?}", "{name} — {generation:?} architecture");
             let min = if experimental { NvidiaGeneration::Maxwell } else { NvidiaGeneration::Turing };
             if generation == NvidiaGeneration::Unknown {
-                checks.push(Check::unknown("nvidia_gpu", "GPU NVIDIA supportata", &gen_label));
+                checks.push(Check::unknown("nvidia_gpu", &gpu_label, &gen_label));
             } else if generation < min {
-                checks.push(Check::fail("nvidia_gpu", "GPU NVIDIA supportata", &format!("{gen_label}: troppo vecchia")));
+                checks.push(Check::fail("nvidia_gpu", &gpu_label, tr!("{gen_label}: troppo vecchia", "{gen_label}: too old")));
             } else if experimental && generation != NvidiaGeneration::Blackwell {
-                checks.push(Check::warn("nvidia_gpu", "GPU NVIDIA supportata", &format!("{gen_label}: 🧪 in upstream (Waydroid confermato solo su RTX 50)")));
+                checks.push(Check::warn(
+                    "nvidia_gpu",
+                    &gpu_label,
+                    tr!("{gen_label}: 🧪 in upstream (Waydroid confermato solo su RTX 50)", "{gen_label}: 🧪 upstream (Waydroid confirmed on RTX 50 only)"),
+                ));
             } else {
-                checks.push(Check::pass("nvidia_gpu", "GPU NVIDIA supportata", &gen_label));
+                checks.push(Check::pass("nvidia_gpu", &gpu_label, &gen_label));
             }
             if !experimental && generation == NvidiaGeneration::Ada {
                 checks.push(Check::warn(
                     "ada_bug",
-                    "Bug noto del driver su Ada",
-                    "redroid-nvidia ha riprodotto su RTX 4060 un SIGABRT di SurfaceFlinger (vn_ring_submit_locked) causato da un'asserzione nel driver kernel NVIDIA, aperto upstream",
+                    tr!("Bug noto del driver su Ada", "Known driver bug on Ada"),
+                    tr!(
+                        "redroid-nvidia ha riprodotto su RTX 4060 un SIGABRT di SurfaceFlinger (vn_ring_submit_locked) causato da un'asserzione nel driver kernel NVIDIA, aperto upstream",
+                        "redroid-nvidia reproduced a SurfaceFlinger SIGABRT (vn_ring_submit_locked) on an RTX 4060, caused by an NVIDIA kernel driver assertion; open upstream"
+                    ),
                 ));
             }
             nvidia_driver_checks(r, &mut checks, experimental);
         }
-        None => checks.push(Check::fail("nvidia_gpu", "GPU NVIDIA supportata", "nessuna GPU NVIDIA rilevata")),
+        None => checks.push(Check::fail("nvidia_gpu", &gpu_label, tr!("nessuna GPU NVIDIA rilevata", "no NVIDIA GPU detected"))),
     }
     if dev.is_some() {
         checks.push(nvidia_display_check(r));
         checks.push(session_check(r, true));
+        let tested = tr!("Compositor testato upstream", "Compositor tested upstream");
         match r.session.compositor.as_deref() {
-            Some("KWin") => checks.push(Check::pass("compositor_tested", "Compositor testato upstream", "KWin / Plasma 6")),
-            Some(other) => checks.push(Check::warn("compositor_tested", "Compositor testato upstream", &format!("{other}: upstream testa solo KWin / Plasma 6"))),
-            None => checks.push(Check::unknown("compositor_tested", "Compositor testato upstream", "compositor non riconosciuto")),
+            Some("KWin") => checks.push(Check::pass("compositor_tested", &tested, "KWin / Plasma 6")),
+            Some(other) => checks.push(Check::warn("compositor_tested", &tested, tr!("{other}: upstream testa solo KWin / Plasma 6", "{other}: upstream tests KWin / Plasma 6 only"))),
+            None => checks.push(Check::unknown("compositor_tested", &tested, tr!("compositor non riconosciuto", "compositor not recognized"))),
         }
         if !experimental {
             let u = &r.gpu.udmabuf;
+            let label = tr!("Accesso a /dev/udmabuf", "Access to /dev/udmabuf");
             match (u.exists, u.accessible) {
-                (true, true) => checks.push(Check::pass("udmabuf", "Accesso a /dev/udmabuf", "consentito")),
-                (true, false) => checks.push(Check::warn("udmabuf", "Accesso a /dev/udmabuf", "presente ma non accessibile: cursore invisibile e screenshot neri").remedy("La regola udev uaccess di waydroid-nvidia lo concede al prossimo login")),
-                (false, _) => checks.push(Check::warn("udmabuf", "Accesso a /dev/udmabuf", "modulo udmabuf non caricato").remedy("sudo modprobe udmabuf")),
+                (true, true) => checks.push(Check::pass("udmabuf", &label, tr!("consentito", "allowed"))),
+                (true, false) => checks.push(
+                    Check::warn("udmabuf", &label, tr!("presente ma non accessibile: cursore invisibile e screenshot neri", "present but not accessible: invisible cursor and black screenshots"))
+                        .remedy(tr!("La regola udev uaccess di waydroid-nvidia lo concede al prossimo login", "waydroid-nvidia's uaccess udev rule grants it at the next login")),
+                ),
+                (false, _) => checks.push(Check::warn("udmabuf", &label, tr!("modulo udmabuf non caricato", "udmabuf module not loaded")).remedy("sudo modprobe udmabuf")),
             }
         }
         if experimental {
-            checks.push(Check::info("android_version", "Versione Android", "solo immagine ufficiale Android 13 (LineageOS 20)"));
+            checks.push(Check::info(
+                "android_version",
+                tr!("Versione Android", "Android version"),
+                tr!("solo immagine ufficiale Android 13 (LineageOS 20)", "official Android 13 image only (LineageOS 20)"),
+            ));
         }
     }
     common_runtime_checks(r, &mut checks);
     if dev.is_some() {
         let want = if experimental { NvidiaMode::Prolapse } else { NvidiaMode::Venus };
-        let tag = r.waydroid.nvidia_stack.as_ref().map(|s| s.tag.clone()).unwrap_or_else(|| "versione non registrata".into());
+        let tag = r.waydroid.nvidia_stack.as_ref().map(|s| s.tag.clone()).unwrap_or_else(|| tr!("versione non registrata", "version not recorded"));
+        let want_arg = want.as_arg();
         match (&r.waydroid.nvidia_setup, r.waydroid.nvidia_mode) {
             (Some(_), Some(m)) if m == want => {
-                checks.push(Check::pass("waydroid_nvidia", "waydroid-nvidia", &format!("{tag}, modalità {} attiva", m.as_arg())))
+                let mode = m.as_arg();
+                checks.push(Check::pass("waydroid_nvidia", "waydroid-nvidia", tr!("{tag}, modalità {mode} attiva", "{tag}, {mode} mode active")))
             }
-            (Some(_), current) => checks.push(
-                Check::missing(
-                    "waydroid_nvidia",
-                    "waydroid-nvidia",
-                    &format!("{tag} installato, modalità attiva: {}", current.map(|m| m.as_arg()).unwrap_or("nessuna")),
+            (Some(_), current) => {
+                let mode = current.map(|m| m.as_arg().to_string()).unwrap_or_else(|| tr!("nessuna", "none"));
+                checks.push(
+                    Check::missing("waydroid_nvidia", "waydroid-nvidia", tr!("{tag} installato, modalità attiva: {mode}", "{tag} installed, active mode: {mode}"))
+                        .remedy(tr!("Seleziona questo backend: DroidNative esegue waydroid-nvidia-setup --mode {want_arg}", "Select this backend: DroidNative runs waydroid-nvidia-setup --mode {want_arg}")),
                 )
-                .remedy(&format!("Seleziona questo backend: DroidNative esegue waydroid-nvidia-setup --mode {}", want.as_arg())),
-            ),
-            (None, _) => checks.push(
-                Check::missing("waydroid_nvidia", "waydroid-nvidia", "non installato").remedy(&format!(
-                    "Installazione guidata del rilascio {} (hash e commit fissati in DroidNative, attestazioni di build verificate)",
-                    crate::nvidia_stack::latest_release().tag
-                )),
-            ),
+            }
+            (None, _) => {
+                let rel = crate::nvidia_stack::latest_release().tag;
+                checks.push(
+                    Check::missing("waydroid_nvidia", "waydroid-nvidia", tr!("non installato", "not installed")).remedy(tr!(
+                        "Installazione guidata del rilascio {rel} (hash e commit fissati in DroidNative, attestazioni di build verificate)",
+                        "Guided installation of release {rel} (hashes and commit pinned in DroidNative, build attestations checked)"
+                    )),
+                )
+            }
         }
         if r.waydroid.distro_package.as_deref().is_some_and(|s| s.contains("ok installed")) && r.waydroid.nvidia_setup.is_none() {
             checks.push(Check::warn(
                 "runtime_replacement",
-                "Sostituzione del runtime",
-                "waydroid-nvidia installa una Waydroid patchata e non sovrascrive i file di un pacchetto: il pacchetto waydroid attuale va rimosso prima (immagini e dati restano in /var/lib/waydroid e ~/.local/share/waydroid)",
+                tr!("Sostituzione del runtime", "Runtime replacement"),
+                tr!(
+                    "waydroid-nvidia installa una Waydroid patchata e non sovrascrive i file di un pacchetto: il pacchetto waydroid attuale va rimosso prima (immagini e dati restano in /var/lib/waydroid e ~/.local/share/waydroid)",
+                    "waydroid-nvidia installs a patched Waydroid and won't overwrite packaged files: the current waydroid package is removed first (images and data stay in /var/lib/waydroid and ~/.local/share/waydroid)"
+                ),
             ));
         }
         if !experimental && r.waydroid.nvidia_mode == Some(NvidiaMode::Venus) && !r.waydroid.venus_service.is_active() {
-            checks.push(Check::info("venus_service", "Render server Venus (wd-venus)", "non attivo: DroidNative lo avvia insieme alla sessione Android"));
+            checks.push(Check::info(
+                "venus_service",
+                tr!("Render server Venus (wd-venus)", "Venus render server (wd-venus)"),
+                tr!("non attivo: DroidNative lo avvia insieme alla sessione Android", "not running: DroidNative starts it with the Android session"),
+            ));
         }
     }
     BackendAssessment {
-        descriptor: descriptor(kind).clone(),
+        descriptor: descriptor(kind),
         readiness: readiness(&checks),
         target_device: dev.map(|d| d.display_name()),
         target_render_node: dev.and_then(|d| d.render_node.clone()),
@@ -423,11 +526,15 @@ fn assess_nvidia(r: &HostReport, experimental: bool) -> BackendAssessment {
 }
 
 fn assess_software(r: &HostReport) -> BackendAssessment {
-    let mut checks = vec![Check::warn("performance", "Prestazioni", "rendering su CPU: giochi e app 3D lenti, nessuna accelerazione")];
+    let mut checks = vec![Check::warn(
+        "performance",
+        tr!("Prestazioni", "Performance"),
+        tr!("rendering su CPU: giochi e app 3D lenti, nessuna accelerazione", "CPU rendering: games and 3D apps are slow, no acceleration"),
+    )];
     checks.push(session_check(r, false));
     common_runtime_checks(r, &mut checks);
     BackendAssessment {
-        descriptor: descriptor(GpuBackendKind::SoftwareFallback).clone(),
+        descriptor: descriptor(GpuBackendKind::SoftwareFallback),
         readiness: readiness(&checks),
         target_device: Some("CPU (SwiftShader)".into()),
         target_render_node: None,
@@ -443,15 +550,21 @@ pub fn assess_backends(r: &HostReport) -> GpuPlan {
     let display_vendor = r.gpu.display_gpu().map(|d| d.vendor);
 
     let (recommended, reason) = if display_vendor == Some(GpuVendor::Nvidia) && ok(GpuBackendKind::NvidiaAccelerated) {
-        (GpuBackendKind::NvidiaAccelerated, "Il display è sulla GPU NVIDIA e i requisiti di Venus sono soddisfatti: è il percorso hardware più collaudato per questa configurazione.".to_string())
+        (
+            GpuBackendKind::NvidiaAccelerated,
+            tr!(
+                "Il display è sulla GPU NVIDIA e i requisiti di Venus sono soddisfatti: è il percorso hardware più collaudato per questa configurazione.",
+                "The display is on the NVIDIA GPU and Venus' requirements are met: it's the most tested hardware path for this setup."
+            ),
+        )
     } else if ok(GpuBackendKind::MesaNative) && (display_vendor != Some(GpuVendor::Nvidia) || warn_count(GpuBackendKind::MesaNative) == 0) {
-        (GpuBackendKind::MesaNative, "GPU AMD/Intel che pilota il display: Mesa è il percorso nativo senza proxy.".to_string())
+        (GpuBackendKind::MesaNative, tr!("GPU AMD/Intel che pilota il display: Mesa è il percorso nativo senza proxy.", "AMD/Intel GPU driving the display: Mesa is the native path, no proxy."))
     } else if ok(GpuBackendKind::NvidiaExperimental) {
-        (GpuBackendKind::NvidiaExperimental, "Unico percorso hardware NVIDIA compatibile, ma sperimentale.".to_string())
+        (GpuBackendKind::NvidiaExperimental, tr!("Unico percorso hardware NVIDIA compatibile, ma sperimentale.", "The only compatible NVIDIA hardware path, but experimental."))
     } else if ok(GpuBackendKind::MesaNative) {
-        (GpuBackendKind::MesaNative, "Mesa sull'iGPU con import cross-GPU da verificare.".to_string())
+        (GpuBackendKind::MesaNative, tr!("Mesa sull'iGPU con import cross-GPU da verificare.", "Mesa on the iGPU, cross-GPU import to be verified."))
     } else {
-        (GpuBackendKind::SoftwareFallback, "Nessun percorso hardware compatibile: solo rendering software.".to_string())
+        (GpuBackendKind::SoftwareFallback, tr!("Nessun percorso hardware compatibile: solo rendering software.", "No compatible hardware path: software rendering only."))
     };
     GpuPlan { assessments, recommended, reason }
 }

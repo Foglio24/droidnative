@@ -21,6 +21,7 @@ use crate::fs::HostFs;
 use crate::ini::Ini;
 use crate::privileged::{apply_gpu_selection, GpuSelection, PrivError};
 use crate::runtime::waydroid::WAYDROID_CFG;
+use crate::tr;
 
 pub const GH_REPO: &str = "Shiro836/waydroid-nvidia";
 pub const SETUP_BIN: &str = "/usr/bin/waydroid-nvidia-setup";
@@ -186,7 +187,7 @@ fn download(cmd: &dyn CommandRunner, log: &mut String, url: &str, dest: &Path) -
 pub fn fetch_and_verify(release: &NvidiaRelease, dir: &Path, cmd: &dyn CommandRunner, log: &mut String) -> Result<(), PrivError> {
     let tag = release.tag;
     let base = format!("https://github.com/{GH_REPO}/releases/download/{tag}");
-    let fail = |what: String| PrivError::StepFailed { step: "verifica del rilascio waydroid-nvidia".into(), output: what };
+    let fail = |what: String| PrivError::StepFailed { step: tr!("verifica del rilascio waydroid-nvidia", "waydroid-nvidia release check"), output: what };
 
     let sums_path = dir.join("SHA256SUMS");
     if sha256_file(&sums_path).ok().as_deref() != Some(release.sha256sums_sha256) {
@@ -195,13 +196,14 @@ pub fn fetch_and_verify(release: &NvidiaRelease, dir: &Path, cmd: &dyn CommandRu
     let got = sha256_file(&sums_path).map_err(|e| fail(format!("SHA256SUMS: {e}")))?;
     if got != release.sha256sums_sha256 {
         let _ = std::fs::remove_file(&sums_path);
-        return Err(fail(format!("SHA256SUMS ha hash {got}, atteso {} (fissato in DroidNative)", release.sha256sums_sha256)));
+        let want = release.sha256sums_sha256;
+        return Err(fail(tr!("SHA256SUMS ha hash {got}, atteso {want} (fissato in DroidNative)", "SHA256SUMS has hash {got}, expected {want} (pinned in DroidNative)")));
     }
-    log.push_str("SHA256SUMS: hash corrispondente al valore fissato\n");
+    log.push_str(&tr!("SHA256SUMS: hash corrispondente al valore fissato\n", "SHA256SUMS: hash matches the pinned value\n"));
     let sums = parse_sha256sums(&std::fs::read_to_string(&sums_path).map_err(|e| fail(e.to_string()))?);
 
     for name in asset_names(tag) {
-        let want = sums.get(&name).ok_or_else(|| fail(format!("SHA256SUMS non elenca {name}")))?;
+        let want = sums.get(&name).ok_or_else(|| fail(tr!("SHA256SUMS non elenca {name}", "SHA256SUMS does not list {name}")))?;
         let path = dir.join(&name);
         if sha256_file(&path).ok().as_deref() != Some(want.as_str()) {
             download(cmd, log, &format!("{base}/{name}"), &path)?;
@@ -209,7 +211,7 @@ pub fn fetch_and_verify(release: &NvidiaRelease, dir: &Path, cmd: &dyn CommandRu
         let got = sha256_file(&path).map_err(|e| fail(format!("{name}: {e}")))?;
         if &got != want {
             let _ = std::fs::remove_file(&path);
-            return Err(fail(format!("{name}: hash {got}, atteso {want}")));
+            return Err(fail(tr!("{name}: hash {got}, atteso {want}", "{name}: hash {got}, expected {want}")));
         }
         log.push_str(&format!("{name}: OK\n"));
     }
@@ -219,10 +221,11 @@ pub fn fetch_and_verify(release: &NvidiaRelease, dir: &Path, cmd: &dyn CommandRu
         download(cmd, log, &format!("https://github.com/{GH_REPO}/archive/refs/tags/{tag}.tar.gz"), &src)?;
     }
     match tar_commit_id(&src) {
-        Some(c) if c == release.source_commit => log.push_str(&format!("sorgente: commit {c} (fissato)\n")),
+        Some(c) if c == release.source_commit => log.push_str(&tr!("sorgente: commit {c} (fissato)\n", "source: commit {c} (pinned)\n")),
         other => {
             let _ = std::fs::remove_file(&src);
-            return Err(fail(format!("archivio sorgente con commit {other:?}, atteso {}", release.source_commit)));
+            let want = release.source_commit;
+            return Err(fail(tr!("archivio sorgente con commit {other:?}, atteso {want}", "source archive with commit {other:?}, expected {want}")));
         }
     }
     Ok(())
@@ -254,12 +257,15 @@ pub fn install(release: &NvidiaRelease, mode: NvidiaMode, fs: &HostFs, cmd: &dyn
         let cleaned = apply_gpu_selection(&text, &GpuSelection::Auto);
         if cleaned != text {
             std::fs::write(&cfg_path, cleaned)?;
-            log.push_str("waydroid.cfg: rimossi gli override di rendering software di DroidNative\n");
+            log.push_str(&tr!("waydroid.cfg: rimossi gli override di rendering software di DroidNative\n", "waydroid.cfg: removed DroidNative's software rendering overrides\n"));
         }
     }
 
     if let Some(status) = distro_waydroid_status(cmd) {
-        log.push_str(&format!("pacchetto waydroid della distribuzione: {status} → purge (immagini e dati restano)\n"));
+        log.push_str(&tr!(
+            "pacchetto waydroid della distribuzione: {status} → purge (immagini e dati restano)\n",
+            "distribution waydroid package: {status} → purge (images and data are kept)\n"
+        ));
         step(cmd, &mut log, "env", &["DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "waydroid"], Duration::from_secs(900))?;
     }
 

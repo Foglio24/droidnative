@@ -7,16 +7,37 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, thiserror::Error)]
+use crate::tr;
+
+#[derive(Debug)]
 pub enum ApkError {
-    #[error("impossibile leggere il file: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("il file non è un archivio APK valido: {0}")]
+    Io(std::io::Error),
     NotAnArchive(String),
-    #[error("AndroidManifest.xml mancante: non è un APK installabile (bundle .apks/.xapk non supportati)")]
     MissingManifest,
-    #[error("AndroidManifest.xml non valido: {0}")]
     BadManifest(String),
+}
+
+impl std::fmt::Display for ApkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::Io(e) => tr!("impossibile leggere il file: {e}", "cannot read the file: {e}"),
+            Self::NotAnArchive(e) => tr!("il file non è un archivio APK valido: {e}", "the file is not a valid APK archive: {e}"),
+            Self::MissingManifest => tr!(
+                "AndroidManifest.xml mancante: non è un APK installabile (bundle .apks/.xapk non supportati)",
+                "AndroidManifest.xml missing: not an installable APK (.apks/.xapk bundles are not supported)"
+            ),
+            Self::BadManifest(e) => tr!("AndroidManifest.xml non valido: {e}", "invalid AndroidManifest.xml: {e}"),
+        };
+        f.write_str(&text)
+    }
+}
+
+impl std::error::Error for ApkError {}
+
+impl From<std::io::Error> for ApkError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,7 +113,7 @@ pub fn inspect_apk(path: &Path, host_abi: Option<&str>) -> Result<ApkInfo, ApkEr
         path: path.to_string_lossy().into_owned(),
         file_size,
         sha256,
-        package: manifest.package.ok_or_else(|| ApkError::BadManifest("attributo package mancante".into()))?,
+        package: manifest.package.ok_or_else(|| ApkError::BadManifest(tr!("attributo package mancante", "package attribute missing")))?,
         version_name: manifest.version_name,
         version_code: manifest.version_code,
         min_sdk: manifest.min_sdk,
@@ -154,25 +175,25 @@ fn u32_at(d: &[u8], o: usize) -> Option<u32> {
     d.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-fn bad(msg: &str) -> ApkError {
-    ApkError::BadManifest(msg.to_string())
+fn bad(msg: String) -> ApkError {
+    ApkError::BadManifest(msg)
 }
 
 pub fn parse_manifest(data: &[u8]) -> Result<Manifest, ApkError> {
     if u16_at(data, 0) != Some(RES_XML_TYPE) {
-        return Err(bad("intestazione AXML assente (manifest testuale o cifrato?)"));
+        return Err(bad(tr!("intestazione AXML assente (manifest testuale o cifrato?)", "no AXML header (text or encrypted manifest?)")));
     }
-    let mut off = u16_at(data, 2).ok_or_else(|| bad("troncato"))? as usize;
+    let mut off = u16_at(data, 2).ok_or_else(|| bad(tr!("troncato", "truncated")))? as usize;
     let mut strings: Vec<String> = Vec::new();
     let mut res_ids: Vec<u32> = Vec::new();
     let mut m = Manifest::default();
 
     while off + 8 <= data.len() {
-        let ty = u16_at(data, off).ok_or_else(|| bad("troncato"))?;
-        let header_size = u16_at(data, off + 2).ok_or_else(|| bad("troncato"))? as usize;
-        let size = u32_at(data, off + 4).ok_or_else(|| bad("troncato"))? as usize;
+        let ty = u16_at(data, off).ok_or_else(|| bad(tr!("troncato", "truncated")))?;
+        let header_size = u16_at(data, off + 2).ok_or_else(|| bad(tr!("troncato", "truncated")))? as usize;
+        let size = u32_at(data, off + 4).ok_or_else(|| bad(tr!("troncato", "truncated")))? as usize;
         if size < 8 || off + size > data.len() {
-            return Err(bad("dimensione di un blocco non valida"));
+            return Err(bad(tr!("dimensione di un blocco non valida", "invalid chunk size")));
         }
         let chunk = &data[off..off + size];
         match ty {
@@ -190,13 +211,13 @@ pub fn parse_manifest(data: &[u8]) -> Result<Manifest, ApkError> {
 
 fn read_element(chunk: &[u8], header_size: usize, strings: &[String], res_ids: &[u32], m: &mut Manifest) -> Result<(), ApkError> {
     let ext = header_size;
-    let name_idx = u32_at(chunk, ext + 4).ok_or_else(|| bad("elemento troncato"))? as usize;
-    let attr_start = u16_at(chunk, ext + 8).ok_or_else(|| bad("elemento troncato"))? as usize;
-    let attr_size = u16_at(chunk, ext + 10).ok_or_else(|| bad("elemento troncato"))? as usize;
-    let attr_count = u16_at(chunk, ext + 12).ok_or_else(|| bad("elemento troncato"))? as usize;
+    let name_idx = u32_at(chunk, ext + 4).ok_or_else(|| bad(tr!("elemento troncato", "truncated element")))? as usize;
+    let attr_start = u16_at(chunk, ext + 8).ok_or_else(|| bad(tr!("elemento troncato", "truncated element")))? as usize;
+    let attr_size = u16_at(chunk, ext + 10).ok_or_else(|| bad(tr!("elemento troncato", "truncated element")))? as usize;
+    let attr_count = u16_at(chunk, ext + 12).ok_or_else(|| bad(tr!("elemento troncato", "truncated element")))? as usize;
     let element = strings.get(name_idx).map(String::as_str).unwrap_or("");
     if attr_size < 20 {
-        return Err(bad("dimensione attributo non valida"));
+        return Err(bad(tr!("dimensione attributo non valida", "invalid attribute size")));
     }
 
     for i in 0..attr_count {
@@ -204,7 +225,7 @@ fn read_element(chunk: &[u8], header_size: usize, strings: &[String], res_ids: &
         let (Some(aname), Some(raw), Some(dtype), Some(value)) =
             (u32_at(chunk, a + 4), u32_at(chunk, a + 8), chunk.get(a + 15).copied(), u32_at(chunk, a + 16))
         else {
-            return Err(bad("attributo troncato"));
+            return Err(bad(tr!("attributo troncato", "truncated attribute")));
         };
         let aname = aname as usize;
         let res_id = res_ids.get(aname).copied().unwrap_or(0);
@@ -242,18 +263,18 @@ fn read_element(chunk: &[u8], header_size: usize, strings: &[String], res_ids: &
 }
 
 fn parse_string_pool(chunk: &[u8]) -> Result<Vec<String>, ApkError> {
-    let header_size = u16_at(chunk, 2).ok_or_else(|| bad("string pool troncato"))? as usize;
-    let count = u32_at(chunk, 8).ok_or_else(|| bad("string pool troncato"))? as usize;
-    let flags = u32_at(chunk, 16).ok_or_else(|| bad("string pool troncato"))?;
-    let strings_start = u32_at(chunk, 20).ok_or_else(|| bad("string pool troncato"))? as usize;
+    let header_size = u16_at(chunk, 2).ok_or_else(|| bad(tr!("string pool troncato", "truncated string pool")))? as usize;
+    let count = u32_at(chunk, 8).ok_or_else(|| bad(tr!("string pool troncato", "truncated string pool")))? as usize;
+    let flags = u32_at(chunk, 16).ok_or_else(|| bad(tr!("string pool troncato", "truncated string pool")))?;
+    let strings_start = u32_at(chunk, 20).ok_or_else(|| bad(tr!("string pool troncato", "truncated string pool")))? as usize;
     let utf8 = flags & 0x100 != 0;
     if count > chunk.len() / 4 {
-        return Err(bad("numero di stringhe non plausibile"));
+        return Err(bad(tr!("numero di stringhe non plausibile", "implausible string count")));
     }
 
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
-        let rel = u32_at(chunk, header_size + i * 4).ok_or_else(|| bad("offset stringa mancante"))? as usize;
+        let rel = u32_at(chunk, header_size + i * 4).ok_or_else(|| bad(tr!("offset stringa mancante", "missing string offset")))? as usize;
         let mut p = strings_start + rel;
         let s = if utf8 {
             let len8 = |p: &mut usize| -> Option<usize> {
@@ -267,17 +288,17 @@ fn parse_string_pool(chunk: &[u8]) -> Result<Vec<String>, ApkError> {
                     Some(b0)
                 }
             };
-            let _utf16_len = len8(&mut p).ok_or_else(|| bad("stringa troncata"))?;
-            let n = len8(&mut p).ok_or_else(|| bad("stringa troncata"))?;
-            String::from_utf8_lossy(chunk.get(p..p + n).ok_or_else(|| bad("stringa troncata"))?).into_owned()
+            let _utf16_len = len8(&mut p).ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))?;
+            let n = len8(&mut p).ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))?;
+            String::from_utf8_lossy(chunk.get(p..p + n).ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))?).into_owned()
         } else {
-            let mut n = u16_at(chunk, p).ok_or_else(|| bad("stringa troncata"))? as usize;
+            let mut n = u16_at(chunk, p).ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))? as usize;
             p += 2;
             if n & 0x8000 != 0 {
-                n = ((n & 0x7fff) << 16) | u16_at(chunk, p).ok_or_else(|| bad("stringa troncata"))? as usize;
+                n = ((n & 0x7fff) << 16) | u16_at(chunk, p).ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))? as usize;
                 p += 2;
             }
-            let units: Vec<u16> = (0..n).map(|k| u16_at(chunk, p + k * 2)).collect::<Option<_>>().ok_or_else(|| bad("stringa troncata"))?;
+            let units: Vec<u16> = (0..n).map(|k| u16_at(chunk, p + k * 2)).collect::<Option<_>>().ok_or_else(|| bad(tr!("stringa troncata", "truncated string")))?;
             String::from_utf16_lossy(&units)
         };
         out.push(s);

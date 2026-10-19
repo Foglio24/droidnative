@@ -41,7 +41,7 @@ impl GpuVendor {
             Self::Amd => "AMD",
             Self::Intel => "Intel",
             Self::VirtIo => "VirtIO",
-            Self::Other => "Altro",
+            Self::Other => crate::i18n::pick("Altro", "Other"),
         }
     }
 }

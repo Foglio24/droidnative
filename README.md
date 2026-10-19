@@ -6,7 +6,7 @@ con accelerazione GPU verificata sul renderer reale.**
 *Real Android apps on Debian/Ubuntu Linux in a container (Waydroid), with GPU acceleration
 that is verified against the renderer Android actually uses — never just assumed.*
 
-![Panoramica: accelerazione NVIDIA verificata](docs/screenshots/panoramica.png)
+![Panoramica: Android attivo con accelerazione NVIDIA verificata](docs/screenshots/panoramica.png)
 
 DroidNative è un'applicazione desktop (Tauri 2 + React, backend Rust) che:
 
@@ -20,6 +20,10 @@ DroidNative è un'applicazione desktop (Tauri 2 + React, backend Rust) che:
   finestre Android arrivino davvero sul desktop;
 - installa, avvia e rimuove gli APK, analizzandoli prima (manifest, ABI, permessi, SHA-256)
   e confermando l'installazione solo quando Android l'ha completata.
+
+Interfaccia in stile Material 3 (tema chiaro e scuro di sistema). Lingua: italiano se la
+sessione è in italiano (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), inglese in tutti gli
+altri casi — vale per l'app, la CLI e i messaggi dell'helper privilegiato.
 
 ## Installazione
 
@@ -35,16 +39,24 @@ KDE Neon…), sessione Wayland, kernel con binder (i kernel delle distribuzioni 
    ```
 
    ```bash
-   gh attestation verify droidnative_0.1.0_amd64.deb --repo Foglio24/droidnative
+   gh attestation verify droidnative_0.2.0_amd64.deb --repo Foglio24/droidnative
    ```
 
 3. Installa:
 
    ```bash
-   sudo apt install ./droidnative_0.1.0_amd64.deb
+   sudo apt install ./droidnative_0.2.0_amd64.deb
    ```
 
+   (il comando va lanciato nella cartella in cui hai scaricato il file)
 4. Apri **DroidNative** dal menu delle applicazioni e segui **Installazione**.
+
+### Installare un'app Android
+
+Apri **App Android**, premi **Avvia Android** e poi **Installa APK**: DroidNative analizza il
+file, ti mostra nome, versione, permessi e compatibilità con la CPU e, dopo la conferma, lo
+installa e attende che Android completi l'installazione. L'app compare nell'elenco e nel
+menu delle applicazioni del desktop. Da terminale: `droidnative app install file.apk`.
 
 Il pacchetto installa `/usr/bin/droidnative-app` (interfaccia), `/usr/bin/droidnative`
 (CLI e helper privilegiato) e l'azione polkit `io.droidnative.priv`. Per rimuoverlo:
@@ -52,7 +64,7 @@ Il pacchetto installa `/usr/bin/droidnative-app` (interfaccia), `/usr/bin/droidn
 
 ## Backend GPU
 
-![Pagina GPU](docs/screenshots/gpu.png)
+![App Android con le icone reali](docs/screenshots/app.png)
 
 | Backend | Stack | Quando |
 |---|---|---|

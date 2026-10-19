@@ -2,8 +2,19 @@
 
 use std::process::Command;
 
+fn droidnative_in(lang: &str, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_droidnative"))
+        .args(args)
+        .env_remove("LANGUAGE")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .env("LANG", lang)
+        .output()
+        .expect("binary runs")
+}
+
 fn droidnative(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_droidnative")).args(args).output().expect("binary runs")
+    droidnative_in("it_IT.UTF-8", args)
 }
 
 #[test]
@@ -61,4 +72,17 @@ fn apk_inspection_reports_bad_files() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("APK"));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn english_outside_italian_locales() {
+    let out = droidnative_in("de_DE.UTF-8", &["doctor", "--format", "markdown"]);
+    assert!(out.status.success());
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("# DroidNative compatibility report"), "{md}");
+    assert!(md.contains("## GPU backends"));
+    let help = droidnative_in("C", &["--help"]);
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Analyze the system"));
+    let help_it = droidnative_in("it_IT.UTF-8", &["--help"]);
+    assert!(String::from_utf8_lossy(&help_it.stdout).contains("Analizza il sistema"));
 }

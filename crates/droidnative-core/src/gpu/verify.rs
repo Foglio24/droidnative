@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::GpuVendor;
+use crate::tr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,7 +43,7 @@ pub struct DisplayHealth {
 
 impl DisplayHealth {
     pub fn unknown() -> Self {
-        Self { status: DisplayStatus::Unknown, detail: "diagnostica non disponibile".into(), evidence: Vec::new() }
+        Self { status: DisplayStatus::Unknown, detail: tr!("diagnostica non disponibile", "diagnostics not available"), evidence: Vec::new() }
     }
 }
 
@@ -56,19 +57,21 @@ pub fn classify_display(log: &str) -> DisplayHealth {
     if import.is_empty() && disconnected.is_empty() && crashes.is_empty() {
         return DisplayHealth {
             status: DisplayStatus::Ok,
-            detail: "nessun errore di visualizzazione registrato dall'avvio del container".into(),
+            detail: tr!("nessun errore di visualizzazione registrato dall'avvio del container", "no display error logged since the container started"),
             evidence: Vec::new(),
         };
     }
-    let times = |n: usize| if n == 1 { "1 volta".to_string() } else { format!("{n} volte") };
+    let times = |n: usize| if n == 1 { tr!("1 volta", "once") } else { tr!("{n} volte", "{n} times") };
     let mut detail = Vec::new();
     if !import.is_empty() {
-        detail.push(format!("il compositor del desktop ha rifiutato i buffer di Android {}", times(import.len())));
+        let t = times(import.len());
+        detail.push(tr!("il compositor del desktop ha rifiutato i buffer di Android {t}", "the desktop compositor refused Android's buffers {t}"));
     }
     if !crashes.is_empty() {
-        detail.push(format!("l'hwcomposer di Android è andato in crash {}", times(crashes.len())));
+        let t = times(crashes.len());
+        detail.push(tr!("l'hwcomposer di Android è andato in crash {t}", "Android's hwcomposer crashed {t}"));
     } else if !disconnected.is_empty() {
-        detail.push("l'hwcomposer è stato disconnesso dal compositor".into());
+        detail.push(tr!("l'hwcomposer è stato disconnesso dal compositor", "the hwcomposer was disconnected by the compositor"));
     }
     let evidence = import.iter().chain(disconnected.iter()).chain(crashes.iter()).take(5).map(|l| l.trim().to_string()).collect();
     DisplayHealth { status: DisplayStatus::Failed, detail: detail.join("; "), evidence }
@@ -107,7 +110,7 @@ const SOFTWARE_MARKERS: &[&str] = &["swiftshader", "llvmpipe", "softpipe", "lava
 /// Classify the output of `dumpsys SurfaceFlinger`.
 pub fn classify_gles(dumpsys: &str) -> AccelVerdict {
     let Some(line) = dumpsys.lines().map(str::trim).find(|l| l.starts_with("GLES:")) else {
-        return AccelVerdict::unknown("Nessuna riga GLES nell'output di SurfaceFlinger");
+        return AccelVerdict::unknown(tr!("Nessuna riga GLES nell'output di SurfaceFlinger", "No GLES line in SurfaceFlinger's output"));
     };
     let lower = line.to_ascii_lowercase();
     let verdict = |status, vendor, path: &str, detail: &str| AccelVerdict {
@@ -121,35 +124,35 @@ pub fn classify_gles(dumpsys: &str) -> AccelVerdict {
 
     if SOFTWARE_MARKERS.iter().any(|m| lower.contains(m)) {
         // ANGLE on SwiftShader-Vulkan is still CPU rendering.
-        return verdict(AccelStatus::Software, None, "software", "Rendering software: la GPU non viene utilizzata");
+        return verdict(AccelStatus::Software, None, "software", &tr!("Rendering software: la GPU non viene utilizzata", "Software rendering: the GPU is not used"));
     }
     if lower.contains("venus") && lower.contains("nvidia") {
-        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Nvidia), "angle-venus", "GPU NVIDIA tramite Venus (waydroid-nvidia)");
+        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Nvidia), "angle-venus", &tr!("GPU NVIDIA tramite Venus (waydroid-nvidia)", "NVIDIA GPU through Venus (waydroid-nvidia)"));
     }
     if lower.contains("venus") {
-        return verdict(AccelStatus::HardwareVerified, None, "angle-venus", "GPU host tramite Venus");
+        return verdict(AccelStatus::HardwareVerified, None, "angle-venus", &tr!("GPU host tramite Venus", "Host GPU through Venus"));
     }
     if lower.contains("nvidia") || lower.contains("nvk") {
-        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Nvidia), "nvidia-native", "GPU NVIDIA con driver nel guest");
+        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Nvidia), "nvidia-native", &tr!("GPU NVIDIA con driver nel guest", "NVIDIA GPU with the driver inside Android"));
     }
     if lower.contains("radeonsi") || lower.contains("amd") || lower.contains("radeon") || lower.contains("radv") {
-        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Amd), "mesa", "GPU AMD tramite Mesa");
+        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Amd), "mesa", &tr!("GPU AMD tramite Mesa", "AMD GPU through Mesa"));
     }
     if lower.contains("intel") || lower.contains("iris") || lower.contains("crocus") || lower.contains("anv") {
-        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Intel), "mesa", "GPU Intel tramite Mesa");
+        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::Intel), "mesa", &tr!("GPU Intel tramite Mesa", "Intel GPU through Mesa"));
     }
     if lower.contains("virgl") || lower.contains("virtio") {
-        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::VirtIo), "virgl", "GPU virtuale (virgl)");
+        return verdict(AccelStatus::HardwareVerified, Some(GpuVendor::VirtIo), "virgl", &tr!("GPU virtuale (virgl)", "Virtual GPU (virgl)"));
     }
     if lower.contains("mesa") || lower.contains("freedreno") || lower.contains("panfrost") || lower.contains("mali") {
-        return verdict(AccelStatus::HardwareVerified, None, "mesa", "GPU tramite Mesa");
+        return verdict(AccelStatus::HardwareVerified, None, "mesa", &tr!("GPU tramite Mesa", "GPU through Mesa"));
     }
     AccelVerdict {
         status: AccelStatus::Unknown,
         vendor: None,
         path: None,
         gles_line: Some(line.to_string()),
-        detail: "Renderer non riconosciuto: verificare manualmente".into(),
+        detail: tr!("Renderer non riconosciuto: verificare manualmente", "Renderer not recognized: check it manually"),
         display: DisplayHealth::unknown(),
     }
 }

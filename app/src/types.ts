@@ -131,6 +131,7 @@ export interface AndroidApp {
   name: string;
   package: string;
   categories: string[];
+  icon: string | null;
 }
 
 export type AbiCompat = "universal" | "native" | "needs_translation" | "incompatible";
