@@ -306,6 +306,7 @@ pub fn set_mode(mode: NvidiaMode, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         return Err(PrivError::Missing("waydroid-nvidia"));
     }
     let mut log = String::new();
+    crate::extras::ensure_container_stopped(cmd, &mut log, Duration::from_secs(1))?;
     step(cmd, &mut log, SETUP_BIN, &["--mode", mode.as_arg()], Duration::from_secs(1800))?;
     if let Some(mut state) = read_state(fs) {
         state.mode = mode;

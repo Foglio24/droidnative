@@ -125,6 +125,13 @@ pub enum PrivilegedOp {
     InstallNvidiaStack { tag: String, mode: crate::nvidia_stack::NvidiaMode },
     /// Switch an installed waydroid-nvidia between venus and nvidia-prolapse.
     NvidiaSetMode { mode: crate::nvidia_stack::NvidiaMode },
+    /// `waydroid init -f -s <type>` (apps and data kept), then re-provision waydroid-nvidia.
+    SwitchSystemImage { system_type: SystemType },
+    /// Install the pinned libndk ARM translation into the system overlay.
+    InstallArmTranslation,
+    RemoveArmTranslation,
+    /// Read the GSF Android ID needed to register the device with Google.
+    GoogleDeviceId,
 }
 
 impl PrivilegedOp {
@@ -147,6 +154,10 @@ impl PrivilegedOp {
             Self::UninstallPackage { package } => v(&["uninstall-package", package]),
             Self::InstallNvidiaStack { tag, mode } => v(&["install-nvidia-stack", "--tag", tag, "--mode", mode.as_arg()]),
             Self::NvidiaSetMode { mode } => v(&["nvidia-mode", "--mode", mode.as_arg()]),
+            Self::SwitchSystemImage { system_type } => v(&["switch-image", "--system-type", system_type.as_arg()]),
+            Self::InstallArmTranslation => v(&["install-arm-translation"]),
+            Self::RemoveArmTranslation => v(&["remove-arm-translation"]),
+            Self::GoogleDeviceId => v(&["google-device-id"]),
         }
     }
 
@@ -191,6 +202,22 @@ impl PrivilegedOp {
                 let mode = mode.as_arg();
                 tr!("Passare waydroid-nvidia alla modalità {mode}", "Switch waydroid-nvidia to {mode} mode")
             }
+            Self::SwitchSystemImage { system_type } => {
+                let t = system_type.as_arg();
+                tr!(
+                    "Passare all'immagine di sistema {t} (LineageOS 20, canale OTA ufficiale, ~1 GB, verificata con SHA-256 da Waydroid). App e dati restano; con waydroid-nvidia la modalità GPU viene riattivata.",
+                    "Switch to the {t} system image (LineageOS 20, official OTA channel, ~1 GB, SHA-256 checked by Waydroid). Apps and data are kept; with waydroid-nvidia the GPU mode is re-activated."
+                )
+            }
+            Self::InstallArmTranslation => {
+                let commit = &crate::extras::LIBNDK_A13.commit[..12];
+                tr!(
+                    "Installare la traduzione ARM libndk di Google (pacchetto supremegamers, commit {commit}, SHA-256 fissato) nell'overlay di sistema di Waydroid e attivare il native bridge. libndk registra anche i gestori binfmt_misc per gli eseguibili ARM nel kernel.",
+                    "Install Google's libndk ARM translation (supremegamers package, commit {commit}, pinned SHA-256) into Waydroid's system overlay and enable the native bridge. libndk also registers binfmt_misc handlers for ARM executables in the kernel."
+                )
+            }
+            Self::RemoveArmTranslation => tr!("Rimuovere la traduzione ARM libndk", "Remove the libndk ARM translation"),
+            Self::GoogleDeviceId => tr!("Leggere l'ID dispositivo Google (GSF Android ID)", "Read the Google device ID (GSF Android ID)"),
         }
     }
 
@@ -200,6 +227,8 @@ impl PrivilegedOp {
             Self::InitWaydroid { .. } | Self::InstallWaydroid { .. } | Self::InstallDiagnostics => Duration::from_secs(3600),
             Self::InstallNvidiaStack { .. } => Duration::from_secs(7200),
             Self::NvidiaSetMode { .. } => Duration::from_secs(1800),
+            Self::SwitchSystemImage { .. } => Duration::from_secs(5400),
+            Self::InstallArmTranslation | Self::RemoveArmTranslation => Duration::from_secs(1200),
             Self::SelectGpu { .. } => Duration::from_secs(300),
             _ => Duration::from_secs(120),
         }
@@ -384,6 +413,10 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
             crate::nvidia_stack::install(release, *mode, fs, cmd)
         }
         PrivilegedOp::NvidiaSetMode { mode } => crate::nvidia_stack::set_mode(*mode, fs, cmd),
+        PrivilegedOp::SwitchSystemImage { system_type } => crate::extras::switch_system_image(*system_type, fs, cmd),
+        PrivilegedOp::InstallArmTranslation => crate::extras::install_libndk(&crate::extras::LIBNDK_A13, fs, cmd),
+        PrivilegedOp::RemoveArmTranslation => crate::extras::remove_libndk(fs, cmd),
+        PrivilegedOp::GoogleDeviceId => crate::extras::google_device_id(cmd),
         PrivilegedOp::AllowContainerNetwork => {
             let mut log = CmdOutput::ok("");
             for rule in UFW_CONTAINER_RULES {

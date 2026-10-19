@@ -1,10 +1,44 @@
 import { useCallback, useEffect, useState } from "react";
-import { mdiCheck, mdiPlay } from "@mdi/js";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { mdiCheck, mdiContentCopy, mdiGoogle, mdiIdentifier, mdiOpenInNew, mdiPlay } from "@mdi/js";
 import type { Shared } from "../App";
 import { api, errorText } from "../api";
 import { t, type Key } from "../i18n";
 import type { SetupStep, SetupView } from "../types";
-import { Button, Chip, Dialog, Icon, Loading, PageHead, useAction } from "../ui";
+import { Button, Card, Chip, Dialog, Icon, Loading, PageHead, useAction } from "../ui";
+
+const UNCERTIFIED_URL = "https://www.google.com/android/uncertified";
+
+function GoogleRegistration(p: Shared) {
+  const { busy, run } = useAction(p.setNotice);
+  const [id, setId] = useState<string | null>(null);
+  return (
+    <Card title={t("google.title")} icon={mdiGoogle}>
+      <p style={{ marginTop: 0 }}>{t("google.body")}</p>
+      <pre className="code" style={{ fontFamily: "inherit" }}>
+        {t("google.steps")}
+      </pre>
+      {id && (
+        <p className="title-m" style={{ marginBottom: 0 }}>
+          {t("google.id", { id })}
+        </p>
+      )}
+      <div className="row" style={{ marginTop: 14 }}>
+        <Button kind="tonal" icon={mdiIdentifier} busy={busy === "id"} onClick={() => run("id", api.googleDeviceId).then((v) => v && setId(v))}>
+          {t("google.show")}
+        </Button>
+        {id && (
+          <Button kind="text" icon={mdiContentCopy} onClick={() => run("copy", () => navigator.clipboard.writeText(id), () => t("google.copied"))}>
+            {t("google.copy")}
+          </Button>
+        )}
+        <Button kind="filled" icon={mdiOpenInNew} onClick={() => run("open", () => openUrl(UNCERTIFIED_URL))}>
+          {t("google.open")}
+        </Button>
+      </div>
+    </Card>
+  );
+}
 
 const TONE: Record<SetupStep["state"], string | undefined> = {
   done: "pass",
@@ -78,6 +112,7 @@ export function Setup(p: Shared) {
           })}
         </ol>
       )}
+      {p.report?.host.waydroid.system_image === "gapps" && <GoogleRegistration {...p} />}
       {view && <p className="small muted">{t("setup.helper", { path: view.helper })}</p>}
       {confirm && (
         <Dialog title={confirm.title} confirmLabel={t("common.continue")} onCancel={() => setConfirm(null)} onConfirm={() => void execute(confirm)}>

@@ -211,6 +211,54 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
     };
     steps.push(gpu_step);
 
+    let gapps = w.system_image == Some(crate::extras::SystemImage::Gapps);
+    steps.push(SetupStep {
+        id: "google_services",
+        title: tr!("Servizi Google (Play Store)", "Google services (Play Store)"),
+        detail: if gapps {
+            tr!(
+                "immagine GAPPS attiva: registra il dispositivo con il tuo account Google (ID nella sezione «Registra il dispositivo con Google»)",
+                "GAPPS image active: register the device with your Google account (ID in the “Register the device with Google” section)"
+            )
+        } else {
+            tr!(
+                "Play Store e Google Play Services con l'immagine ufficiale GAPPS (~1 GB); app e dati restano",
+                "Play Store and Google Play Services with the official GAPPS image (~1 GB); apps and data are kept"
+            )
+        },
+        state: if gapps {
+            StepState::Done
+        } else if w.initialized {
+            StepState::Optional
+        } else {
+            StepState::Blocked
+        },
+        op: (!gapps && w.initialized).then_some(PrivilegedOp::SwitchSystemImage { system_type: SystemType::Gapps }),
+        action: None,
+    });
+
+    steps.push(SetupStep {
+        id: "arm_translation",
+        title: tr!("Traduzione ARM (libndk)", "ARM translation (libndk)"),
+        detail: if w.arm_translation {
+            tr!("attiva: le app con solo codice ARM vengono tradotte", "active: ARM-only apps are translated")
+        } else {
+            tr!(
+                "permette di usare app e giochi con solo codice ARM; libndk è indicata per le CPU AMD",
+                "lets you run ARM-only apps and games; libndk is the right choice for AMD CPUs"
+            )
+        },
+        state: if w.arm_translation {
+            StepState::Done
+        } else if w.initialized {
+            StepState::Optional
+        } else {
+            StepState::Blocked
+        },
+        op: (!w.arm_translation && w.initialized).then_some(PrivilegedOp::InstallArmTranslation),
+        action: None,
+    });
+
     let have_diag = host.gpu.opengl.is_some() && host.gpu.vulkan.vulkaninfo_available;
     steps.push(SetupStep {
         id: "diagnostics",

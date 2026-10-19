@@ -2,6 +2,7 @@
 
 pub mod apk;
 pub mod exec;
+pub mod extras;
 pub mod fs;
 pub mod i18n;
 pub mod gpu;

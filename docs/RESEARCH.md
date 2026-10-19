@@ -185,6 +185,15 @@ SUPER (display, driver 615 open) + iGPU AMD Raphael, GNOME/Mutter su Wayland.
 | Modalità nvidia-prolapse (🧪 upstream per RTX 40) | gate di installazione 22/22 sul modulo 615.71.09; `ANGLE (NVIDIA, Vulkan 1.4.354 (NVIDIA GeForce RTX 4070 Ti SUPER (NVK NV193)))` | NVIDIA Experimental verificato |
 | Il bug di `removeApp` resta anche in Waydroid 1.6.3 patchata | `Failed to uninstall package` | Ripiego `pm uninstall` confermato |
 | Venus richiede il servizio utente `wd-venus` | socket `/run/waydroid-venus/venus.sock` | DroidNative lo avvia prima della sessione |
+| `waydroid init -f -s GAPPS` riavvia il container fuori da systemd | servizio `inactive` ma `lxc-info` `RUNNING`; `waydroid-nvidia-setup`: "the Waydroid container did not stop" | Arresto verificato con `lxc-info` prima e dopo `init`, poi la modalità waydroid-nvidia viene riattivata |
+| Immagine GAPPS con venus | system.img GAPPS 2,58 GB; `com.android.vending`, `com.google.android.gms` 23.10.15, `com.google.android.gsf`; stesso renderer `ANGLE (NVIDIA, … Venus …)`, nessun errore di visualizzazione | Passo "Servizi Google"; ID GSF letto da `gservices.db` |
+| libndk (supremegamers, Android 13) installato nell'overlay | 177 file; `ro.product.cpu.abilist=x86_64,x86,arm64-v8a,armeabi-v7a,armeabi`, `ro.dalvik.vm.native.bridge=libndk_translation.so` | Passo "Traduzione ARM" |
+| VLC 3.7.2 solo ARM | `primaryCpuAbi=arm64-v8a` e poi `armeabi-v7a`; nel processo `lib/arm64/libvlc.so` con `libndk_translation.so` (`lib/arm/libvlc.so` con `/system/lib/libndk_translation.so` a 32 bit); attività in primo piano, nessun `UnsatisfiedLinkError` né crash | ABI "tradotta" nell'analisi APK |
+| libndk registra 4 gestori `binfmt_misc` nel kernel dell'host a ogni avvio di Android | `arm_exe`, `arm_dyn`, `arm64_exe`, `arm64_dyn`, interprete `/system/bin/ndk_translation_program_runner_binfmt_misc*`, flag `P` senza `F` | Documentato (precedenza su qemu-user-static); la rimozione li annulla, verificato anche dopo il riavvio di Android |
+| `lxc-attach` (usato da `waydroid shell`) cambia proprietario e permessi dei file collegati a stdout/stderr | file di log diventati `root 0600` | DroidNative cattura sempre l'output con pipe; nei test manuali reindirizzare con `\| cat` |
+
+Schermate catturate in Android con `screencap`: [venus](android-nvidia-venus-screencap.png),
+[VLC solo ARM tramite libndk](android-arm-vlc-screencap.png).
 
 Non osservato in queste prove: il crash del driver su Ada riportato da redroid-nvidia
 (RTX 4060). Le prove sono brevi (apertura di app, non giochi o carichi prolungati).

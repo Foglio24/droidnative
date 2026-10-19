@@ -21,6 +21,7 @@
 │ runtime/   trait AndroidRuntime + backend Waydroid                       │
 │ apk/       ispezione APK (AndroidManifest binario, ABI, SHA-256)         │
 │ privileged operazioni root in elenco chiuso                              │
+│ extras     immagine GAPPS, traduzione ARM libndk, ID dispositivo Google  │
 │ report     report di compatibilità                                       │
 └──────────────────────────────────────┬───────────────────────────────────┘
                      pkexec (polkit)   │   come utente
@@ -73,6 +74,34 @@
 
 In modalità `venus` DroidNative avvia il servizio utente `wd-venus.service` prima della
 sessione Android.
+
+## Google Play e traduzione ARM (`extras.rs`)
+
+**Cambio d'immagine** (`SwitchSystemImage`): `waydroid init -f -s GAPPS|VANILLA`. Prima
+e dopo, DroidNative si assicura che il container LXC sia fermo (`lxc-info`, poi
+`systemctl stop` e `waydroid container stop`): `waydroid init` riavvia il container fuori
+da systemd e `waydroid-nvidia-setup` rifiuterebbe di procedere. Con waydroid-nvidia la
+modalità letta da `waydroid.cfg` prima del cambio viene riattivata, perché `init -f`
+riscrive le proprietà del vendor. `init -f` conserva `[properties]` e l'overlay
+(`/var/lib/waydroid/overlay`), quindi anche libndk; i dati Android restano.
+
+**libndk** (`InstallArmTranslation`): archivio supremegamers per Android 13 fissato a
+commit e SHA-256 (lo stesso usato da waydroid_script). Come root, in
+`/var/lib/droidnative/libndk` (0700): download solo se il file in cache non corrisponde,
+verifica dell'hash, estrazione delle sole voci `*/prebuilts/` nell'overlay di sistema con
+rifiuto dei percorsi che escono dalla destinazione, permessi `root:shell 0755` per
+`bin/` e `root:root 0644` per il resto, elenco dei file installati in
+`/var/lib/droidnative/libndk-files.txt`. Le proprietà (`ro.product.cpu.abilist*`,
+`ro.dalvik.vm.native.bridge=libndk_translation.so`, `ro.enable.native.bridge.exec`,
+`ro.dalvik.vm.isa.arm*`) vanno in `[properties]`, poi `waydroid upgrade -o` e riavvio
+del container. La rimozione cancella solo i file elencati e le directory rimaste vuote,
+toglie le proprietà e annulla i gestori `binfmt_misc` che `ndk_translation.rc` registra
+nel kernel dell'host a ogni avvio di Android.
+
+**ID dispositivo Google** (`GoogleDeviceId`): `sqlite3` nel container su
+`gservices.db` di Google Services Framework. La registrazione su
+google.com/android/uncertified la fa l'utente con il proprio account; l'app apre solo
+quell'URL, l'unico ammesso dalla capability `opener:allow-open-url`.
 
 L'accelerazione è considerata **attiva solo dopo la verifica**: lettura della
 riga `GLES:` di `dumpsys SurfaceFlinger` nel container. Le proprietà

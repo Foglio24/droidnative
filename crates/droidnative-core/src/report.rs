@@ -375,6 +375,25 @@ fn runtime_checks(r: &HostReport) -> Vec<Check> {
             tr!("nessun blocco del firewall rilevato; l'indirizzo compare al primo avvio", "no firewall block detected; the address appears on first start"),
         ),
     });
+    if w.initialized {
+        let google = tr!("Servizi Google", "Google services");
+        c.push(match w.system_image {
+            Some(crate::extras::SystemImage::Gapps) => Check::pass("google_services", &google, tr!("Play Store e Google Play Services presenti (immagine GAPPS)", "Play Store and Google Play Services present (GAPPS image)")),
+            _ => Check::info(
+                "google_services",
+                &google,
+                tr!("assenti (immagine senza Google): le app che li richiedono non funzionano", "missing (image without Google): apps that need them won't work"),
+            )
+            .remedy(tr!("Installazione guidata → «Servizi Google (Play Store)»", "Guided setup → “Google services (Play Store)”")),
+        });
+        let arm = tr!("Traduzione ARM", "ARM translation");
+        c.push(if w.arm_translation {
+            Check::pass("arm_translation", &arm, tr!("libndk attiva: app con solo codice ARM supportate", "libndk active: ARM-only apps supported"))
+        } else {
+            Check::info("arm_translation", &arm, tr!("assente: le app con solo codice ARM non partono", "missing: ARM-only apps won't start"))
+                .remedy(tr!("Installazione guidata → «Traduzione ARM (libndk)»", "Guided setup → “ARM translation (libndk)”"))
+        });
+    }
     let pk = tr!("Elevazione privilegi (polkit)", "Privilege elevation (polkit)");
     c.push(match &t.pkexec.path {
         Some(p) => Check::pass("pkexec", &pk, p),

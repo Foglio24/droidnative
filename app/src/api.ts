@@ -32,6 +32,7 @@ export const api = {
   uninstall: (pkg: string) => invoke<string>("uninstall_app", { package: pkg }),
   graphics: () => invoke<GraphicsConfig>("graphics_config"),
   verifyGpu: () => invoke<AccelVerdict>("verify_gpu"),
+  googleDeviceId: () => invoke<string>("google_device_id"),
   logs: (lines: number) => invoke<string>("read_logs", { lines }),
 };
 

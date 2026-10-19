@@ -1,6 +1,6 @@
 # Report di compatibilità DroidNative
 
-Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.1.0
+Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.3.0
 
 **Esito: compatibile**
 
@@ -10,8 +10,8 @@ Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNa
 |---|---|---|
 | ✅ | Distribuzione | AnduinOS 2.0.4 — base Ubuntu 26.04 (resolute) |
 | ✅ | CPU | AMD Ryzen 7 7700X 8-Core Processor · 16 thread · x86_64 |
-| ✅ | Memoria RAM | 30.5 GiB totali, 22.1 GiB disponibili |
-| ✅ | Spazio disco | 40.9 GiB liberi per /var/lib/waydroid |
+| ✅ | Memoria RAM | 30.5 GiB totali, 19.7 GiB disponibili |
+| ✅ | Spazio disco | 30.6 GiB liberi per /var/lib/waydroid |
 | ✅ | systemd | systemd 259 (259.5-0ubuntu3.4) |
 
 ## Kernel e container
@@ -36,8 +36,10 @@ Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNa
 | ℹ️ | Driver NVIDIA | 615.71.09 · modulo open · modeset attivo · backend GBM sì · egl-wayland sì |
 | ℹ️ | Mesa | 26.0.8 (dpkg:libgl1-mesa-dri) |
 | ℹ️ | Vulkan | loader 1.4.341.0 · ICD: asahi_icd 1.4.335, gfxstream_vk_icd 1.1.335, intel_hasvk_icd 1.3.335, intel_icd 1.4.335, lvp_icd 1.4.335, nouveau_icd 1.4.335, nvidia_icd 1.4.351, radeon_icd 1.4.335, virtio_icd 1.4.335 |
-| ℹ️ | vulkaninfo | non installato: dispositivi Vulkan non enumerati (pacchetto vulkan-tools) |
-| ℹ️ | OpenGL host | glxinfo/eglinfo non installati: versione non rilevabile (pacchetto mesa-utils) |
+| ℹ️ | Dispositivo Vulkan | NVIDIA GeForce RTX 4070 Ti SUPER · NVIDIA · API 1.4.351 |
+| ℹ️ | Dispositivo Vulkan | AMD Ryzen 7 7700X 8-Core Processor (RADV RAPHAEL_MENDOCINO) · radv · API 1.4.335 |
+| ℹ️ | Dispositivo Vulkan | llvmpipe (LLVM 21.1.8, 256 bits) · llvmpipe · API 1.4.335 |
+| ℹ️ | OpenGL host | NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2 · 4.6.0 NVIDIA 615.71.09 |
 | ℹ️ | /dev/udmabuf | presente e accessibile |
 
 ## Runtime Android
@@ -49,7 +51,9 @@ Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNa
 | ✅ | Immagini Android | 2 immagini · MAINLINE |
 | ✅ | Servizio container | waydroid-container.service attivo |
 | ✅ | Rete del container | dnsmasq + nftables/iptables presenti |
-| ⚠️ | Rete di Android | firewall UFW attivo (ingresso DROP, inoltro DROP): blocca DHCP, DNS e inoltro su waydroid0, Android resta senza rete — *Installazione guidata → «Consentire la rete del container» (regole limitate a waydroid0)* |
+| ✅ | Rete di Android | indirizzo 192.168.240.112 assegnato dal DHCP del container |
+| ✅ | Servizi Google | Play Store e Google Play Services presenti (immagine GAPPS) |
+| ✅ | Traduzione ARM | libndk attiva: app con solo codice ARM supportate |
 | ✅ | Elevazione privilegi (polkit) | /usr/bin/pkexec |
 | ℹ️ | Installazioni preesistenti | config Waydroid presente; dati utente in ~/.local/share/waydroid; waydroid-nvidia (/usr/bin/waydroid-nvidia-setup) |
 
@@ -69,7 +73,6 @@ Dispositivo: AMD Raphael (/dev/dri/renderD128)
 - ✅ **Sessione Wayland**: Mutter
 - ✅ **Binder nel kernel**: disponibile
 - ✅ **Waydroid**: 1.6.3
-- 📦 **Nodo GPU configurato**: /dev/dri/renderD129 invece di /dev/dri/renderD128
 
 ### NVIDIA Accelerated — pronto (accelerazione da verificare all'avvio)
 
@@ -97,7 +100,7 @@ Driver open-source (NVK + backend NVIDIA) eseguito direttamente dentro Android, 
 Dispositivo: NVIDIA GeForce RTX 4070 Ti SUPER (/dev/dri/renderD129)
 
 - ⚠️ **GPU NVIDIA supportata**: NVIDIA GeForce RTX 4070 Ti SUPER — architettura Ada: 🧪 in upstream (Waydroid confermato solo su RTX 50)
-- ✅ **Driver NVIDIA**: 615.71.09 (modulo open): ✅ in upstream
+- ✅ **Driver NVIDIA**: 615.71.09 (modulo open): ✅ upstream
 - ✅ **nvidia-drm.modeset=1**: attivo
 - ✅ **Compositor sulla GPU NVIDIA**: schermo su NVIDIA GeForce RTX 4070 Ti SUPER (DP-5)
 - ✅ **Sessione Wayland**: Mutter

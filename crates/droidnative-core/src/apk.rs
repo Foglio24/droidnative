@@ -49,6 +49,8 @@ pub enum AbiCompat {
     Native,
     /// Only ARM native code on an x86 host: needs libhoudini/libndk translation.
     NeedsTranslation,
+    /// Only ARM native code, run through the installed ARM translation.
+    Translated,
     /// Native code for no ABI Android-x86 can run.
     Incompatible,
 }
@@ -123,6 +125,14 @@ pub fn inspect_apk(path: &Path, host_abi: Option<&str>) -> Result<ApkInfo, ApkEr
         abi_compat: abi_compat(&abis, host_abi),
         native_abis: abis,
     })
+}
+
+/// Account for an installed ARM translation layer.
+pub fn with_translation(compat: AbiCompat, translation_installed: bool) -> AbiCompat {
+    match compat {
+        AbiCompat::NeedsTranslation if translation_installed => AbiCompat::Translated,
+        other => other,
+    }
 }
 
 pub fn abi_compat(abis: &[String], host_abi: Option<&str>) -> AbiCompat {
@@ -538,5 +548,8 @@ mod tests {
         assert_eq!(abi_compat(&v(&["x86_64", "arm64-v8a"]), Some("x86_64")), AbiCompat::Native);
         assert_eq!(abi_compat(&v(&["mips"]), Some("x86_64")), AbiCompat::Incompatible);
         assert_eq!(abi_compat(&v(&["armeabi-v7a"]), Some("arm64-v8a")), AbiCompat::Native);
+        assert_eq!(with_translation(AbiCompat::NeedsTranslation, true), AbiCompat::Translated);
+        assert_eq!(with_translation(AbiCompat::NeedsTranslation, false), AbiCompat::NeedsTranslation);
+        assert_eq!(with_translation(AbiCompat::Native, true), AbiCompat::Native);
     }
 }

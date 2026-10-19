@@ -12,6 +12,7 @@ const ABI_TONE: Record<ApkInfo["abi_compat"], string> = {
   universal: "pass",
   native: "pass",
   needs_translation: "warn",
+  translated: "info",
   incompatible: "fail",
 };
 

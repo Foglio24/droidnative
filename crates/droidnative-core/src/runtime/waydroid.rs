@@ -86,6 +86,10 @@ pub struct WaydroidInstall {
     pub nvidia_mode: Option<crate::nvidia_stack::NvidiaMode>,
     /// Release DroidNative installed (state file written by the privileged helper).
     pub nvidia_stack: Option<crate::nvidia_stack::StackState>,
+    /// VANILLA / GAPPS / FOSS, from the system OTA channel.
+    pub system_image: Option<crate::extras::SystemImage>,
+    /// libndk ARM translation present in the overlay and enabled.
+    pub arm_translation: bool,
 }
 
 pub fn parse_config(text: &str) -> WaydroidConfig {
@@ -169,6 +173,8 @@ pub fn detect_install(probe: &Probe) -> WaydroidInstall {
             .filter(|s| s.contains("installed") || s.contains("config-files")),
         nvidia_mode: config_text.as_deref().and_then(crate::nvidia_stack::configured_mode),
         nvidia_stack: crate::nvidia_stack::read_state(fs),
+        system_image: config_text.as_deref().map(crate::extras::system_image),
+        arm_translation: config_text.as_deref().map(|t| crate::extras::arm_translation_installed(fs, t)).unwrap_or(false),
     }
 }
 

@@ -120,6 +120,12 @@ async fn nvidia_set_mode(state: tauri::State<'_, AppState>, mode: NvidiaMode) ->
 }
 
 #[tauri::command]
+async fn google_device_id(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let esc = state.escalator.clone();
+    blocking("google_device_id", move || privileged_output(esc.run(&PrivilegedOp::GoogleDeviceId).map_err(|e| e.to_string())?).map(|s| s.trim().to_string())).await
+}
+
+#[tauri::command]
 async fn runtime_status(state: tauri::State<'_, AppState>) -> Result<RuntimeStatus, String> {
     let rt = state.runtime.clone();
     blocking("runtime_status", move || rt.status().map_err(|e| e.to_string())).await
@@ -164,8 +170,10 @@ async fn list_apps(state: tauri::State<'_, AppState>) -> Result<Vec<AndroidApp>,
 #[tauri::command]
 async fn inspect_apk_file(path: String) -> Result<ApkInfo, String> {
     blocking("inspect_apk_file", move || {
-        let abi = probe_local().cpu.android_abi;
-        inspect_apk(&PathBuf::from(path), abi.as_deref()).map_err(|e| e.to_string())
+        let host = probe_local();
+        let mut info = inspect_apk(&PathBuf::from(path), host.cpu.android_abi.as_deref()).map_err(|e| e.to_string())?;
+        info.abi_compat = droidnative_core::apk::with_translation(info.abi_compat, host.waydroid.arm_translation);
+        Ok(info)
     })
     .await
 }
@@ -224,6 +232,7 @@ pub fn run() {
     };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             app_language,
@@ -233,6 +242,7 @@ pub fn run() {
             select_gpu,
             nvidia_install,
             nvidia_set_mode,
+            google_device_id,
             runtime_status,
             session_start,
             session_stop,

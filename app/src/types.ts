@@ -71,6 +71,8 @@ export interface WaydroidInstall {
   nvidia_mode: NvidiaMode | null;
   nvidia_stack: { tag: string; mode: NvidiaMode; installed_unix: number } | null;
   distro_package: string | null;
+  system_image: "vanilla" | "gapps" | "foss" | "unknown" | null;
+  arm_translation: boolean;
 }
 
 export type NvidiaMode = "venus" | "prolapse";
@@ -134,7 +136,7 @@ export interface AndroidApp {
   icon: string | null;
 }
 
-export type AbiCompat = "universal" | "native" | "needs_translation" | "incompatible";
+export type AbiCompat = "universal" | "native" | "needs_translation" | "translated" | "incompatible";
 
 export interface ApkInfo {
   path: string;

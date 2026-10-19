@@ -42,7 +42,7 @@ fn setup_plan_is_json() {
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     let ids: Vec<&str> = v.as_array().unwrap().iter().filter_map(|s| s["id"].as_str()).collect();
-    assert_eq!(ids, ["install_waydroid", "init_images", "container_service", "container_network", "gpu_backend", "diagnostics"]);
+    assert_eq!(ids, ["install_waydroid", "init_images", "container_service", "container_network", "gpu_backend", "google_services", "arm_translation", "diagnostics"]);
 }
 
 #[test]

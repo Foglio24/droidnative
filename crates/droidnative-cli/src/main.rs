@@ -91,6 +91,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show the Google device ID to register at google.com/android/uncertified (needs authentication).
+    GoogleId,
+    /// Switch the Android system image: GAPPS (Google Play) or VANILLA; apps and data are kept
+    /// (needs authentication).
+    SystemImage {
+        #[arg(value_enum)]
+        system_type: SystemTypeArg,
+    },
+    /// Install or remove the libndk ARM translation (needs authentication).
+    ArmTranslation {
+        #[command(subcommand)]
+        action: ToggleAction,
+    },
     /// Last lines of the runtime logs.
     Logs {
         #[arg(short, long, default_value_t = 80)]
@@ -112,6 +125,14 @@ enum SessionAction {
     Start,
     Stop,
     Restart,
+}
+
+#[derive(Subcommand)]
+enum ToggleAction {
+    /// Download the pinned archive, verify it and activate it.
+    Install,
+    /// Remove its files, properties and binfmt_misc handlers.
+    Remove,
 }
 
 #[derive(Subcommand)]
@@ -162,6 +183,13 @@ enum PrivCommand {
         #[arg(long, value_parser = parse_mode)]
         mode: NvidiaMode,
     },
+    SwitchImage {
+        #[arg(long, value_enum)]
+        system_type: SystemTypeArg,
+    },
+    InstallArmTranslation,
+    RemoveArmTranslation,
+    GoogleDeviceId,
 }
 
 fn parse_mode(s: &str) -> Result<NvidiaMode, String> {
@@ -174,6 +202,15 @@ enum SystemTypeArg {
     Vanilla,
     #[value(name = "GAPPS", alias = "gapps")]
     Gapps,
+}
+
+impl From<SystemTypeArg> for SystemType {
+    fn from(a: SystemTypeArg) -> Self {
+        match a {
+            SystemTypeArg::Vanilla => SystemType::Vanilla,
+            SystemTypeArg::Gapps => SystemType::Gapps,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -197,12 +234,7 @@ impl PrivCommand {
             Self::EnableContainer => PrivilegedOp::EnableContainerService,
             Self::RestartContainer => PrivilegedOp::RestartContainerService,
             Self::StopContainer => PrivilegedOp::StopContainerService,
-            Self::Init { system_type } => PrivilegedOp::InitWaydroid {
-                system_type: match system_type {
-                    SystemTypeArg::Vanilla => SystemType::Vanilla,
-                    SystemTypeArg::Gapps => SystemType::Gapps,
-                },
-            },
+            Self::Init { system_type } => PrivilegedOp::InitWaydroid { system_type: system_type.into() },
             Self::SelectGpu(a) => PrivilegedOp::SelectGpu {
                 selection: match (a.render_node, a.software) {
                     (Some(n), _) => GpuSelection::RenderNode(n),
@@ -214,7 +246,23 @@ impl PrivCommand {
             Self::UninstallPackage { package } => PrivilegedOp::UninstallPackage { package },
             Self::InstallNvidiaStack { tag, mode } => PrivilegedOp::InstallNvidiaStack { tag, mode },
             Self::NvidiaMode { mode } => PrivilegedOp::NvidiaSetMode { mode },
+            Self::SwitchImage { system_type } => PrivilegedOp::SwitchSystemImage { system_type: system_type.into() },
+            Self::InstallArmTranslation => PrivilegedOp::InstallArmTranslation,
+            Self::RemoveArmTranslation => PrivilegedOp::RemoveArmTranslation,
+            Self::GoogleDeviceId => PrivilegedOp::GoogleDeviceId,
         }
+    }
+}
+
+/// Runs a privileged operation, echoing what it does and its output.
+fn run_op(op: &PrivilegedOp) -> Result<(), String> {
+    eprintln!("→ {}", op.description());
+    let out = escalator().run(op).map_err(|x| x.to_string())?;
+    println!("{}", out.combined());
+    if out.success() {
+        Ok(())
+    } else {
+        Err(tr!("operazione non riuscita", "operation failed"))
     }
 }
 
@@ -343,8 +391,9 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Command::Ui => WaydroidRuntime::local().show_full_ui().map_err(|x| e(&x))?,
         Command::Apk { file, json } => {
-            let abi = probe_local().cpu.android_abi;
-            let info = inspect_apk(&file, abi.as_deref()).map_err(|x| e(&x))?;
+            let host = probe_local();
+            let mut info = inspect_apk(&file, host.cpu.android_abi.as_deref()).map_err(|x| e(&x))?;
+            info.abi_compat = droidnative_core::apk::with_translation(info.abi_compat, host.waydroid.arm_translation);
             if json {
                 print_json(&info);
             } else {
@@ -412,6 +461,27 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             }
         }
+        Command::GoogleId => {
+            let out = escalator().run(&PrivilegedOp::GoogleDeviceId).map_err(|x| e(&x))?;
+            if !out.success() {
+                return Err(out.combined());
+            }
+            let id = out.stdout.trim();
+            let url = droidnative_core::extras::UNCERTIFIED_URL;
+            println!("{id}");
+            eprintln!(
+                "{}",
+                tr!(
+                    "Registra questo ID con il tuo account Google su {url}, poi riavvia Android.",
+                    "Register this ID with your Google account at {url}, then restart Android."
+                )
+            );
+        }
+        Command::SystemImage { system_type } => run_op(&PrivilegedOp::SwitchSystemImage { system_type: system_type.into() })?,
+        Command::ArmTranslation { action } => run_op(&match action {
+            ToggleAction::Install => PrivilegedOp::InstallArmTranslation,
+            ToggleAction::Remove => PrivilegedOp::RemoveArmTranslation,
+        })?,
         Command::Logs { lines } => print!("{}", WaydroidRuntime::local().log_tail(lines).map_err(|x| e(&x))?),
         Command::Priv { lang: requested, op } => {
             if let Some(l) = requested.as_deref().and_then(Lang::from_code) {
@@ -443,6 +513,9 @@ const IT_ABOUT: &[(&str, &str)] = &[
     ("apk", "Ispeziona un APK senza installarlo."),
     ("app", "Gestione delle applicazioni Android."),
     ("verify-gpu", "Verifica il renderer reale usato da Android (richiede autenticazione)."),
+    ("google-id", "Mostra l'ID dispositivo Google da registrare su google.com/android/uncertified (richiede autenticazione)."),
+    ("system-image", "Cambia l'immagine di sistema Android: GAPPS (Google Play) o VANILLA; app e dati restano (richiede autenticazione)."),
+    ("arm-translation", "Installa o rimuove la traduzione ARM libndk (richiede autenticazione)."),
     ("logs", "Ultime righe dei log del runtime."),
 ];
 
