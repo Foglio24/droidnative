@@ -1,0 +1,21 @@
+[package]
+name = "droidnative-app"
+description = "DroidNative desktop application"
+authors = ["Foglio24 <82967977+Foglio24@users.noreply.github.com>"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "droidnative_app_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+droidnative-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

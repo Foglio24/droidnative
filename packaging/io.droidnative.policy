@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  DroidNative runs every administrative task through `pkexec /usr/bin/droidnative priv <op>`.
+  The helper only accepts a closed list of operations and validates their arguments, so this
+  action authorises that helper and nothing else.
+-->
+<policyconfig>
+  <vendor>DroidNative</vendor>
+  <action id="io.droidnative.priv">
+    <description>Manage the Android container and its GPU configuration</description>
+    <description xml:lang="it">Gestire il container Android e la sua configurazione GPU</description>
+    <message>Authentication is required to manage the Android runtime</message>
+    <message xml:lang="it">È richiesta l'autenticazione per gestire il runtime Android</message>
+    <icon_name>droidnative</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/droidnative</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+</policyconfig>

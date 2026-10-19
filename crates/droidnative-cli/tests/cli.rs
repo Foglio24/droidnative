@@ -1,0 +1,64 @@
+//! End-to-end checks of the `droidnative` binary against the machine running the tests.
+
+use std::process::Command;
+
+fn droidnative(args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_droidnative")).args(args).output().expect("binary runs")
+}
+
+#[test]
+fn doctor_json_is_a_complete_report() {
+    let out = droidnative(&["doctor", "--format", "json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    assert!(v["groups"].as_array().is_some_and(|g| g.len() == 4));
+    assert_eq!(v["gpu_plan"]["assessments"].as_array().map(Vec::len), Some(4));
+    assert!(v["host"]["kernel"]["release"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+#[test]
+fn doctor_markdown_never_claims_unverified_acceleration() {
+    let out = droidnative(&["doctor", "--format", "markdown"]);
+    assert!(out.status.success());
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("# Report di compatibilità DroidNative"));
+    assert!(md.contains("Nessun backend è dichiarato attivo"));
+}
+
+#[test]
+fn setup_plan_is_json() {
+    let out = droidnative(&["setup", "--json"]);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
+    let ids: Vec<&str> = v.as_array().unwrap().iter().filter_map(|s| s["id"].as_str()).collect();
+    assert_eq!(ids, ["install_waydroid", "init_images", "container_service", "container_network", "gpu_backend", "diagnostics"]);
+}
+
+#[test]
+fn priv_refuses_to_run_without_root() {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let out = droidnative(&["priv", "load-binder"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("root"));
+}
+
+#[test]
+fn priv_rejects_ambiguous_gpu_selection() {
+    let out = droidnative(&["priv", "select-gpu", "--software", "--auto"]);
+    assert!(!out.status.success());
+}
+
+#[test]
+fn apk_inspection_reports_bad_files() {
+    let dir = std::env::temp_dir().join(format!("droidnative-cli-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("broken.apk");
+    std::fs::write(&f, b"definitely not a zip").unwrap();
+    let out = droidnative(&["apk", f.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("APK"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

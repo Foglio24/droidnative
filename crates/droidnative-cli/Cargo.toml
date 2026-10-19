@@ -1,0 +1,20 @@
+[package]
+name = "droidnative-cli"
+description = "Command line interface and privileged helper for DroidNative"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "droidnative"
+path = "src/main.rs"
+
+[dependencies]
+droidnative-core.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+serde_json.workspace = true
