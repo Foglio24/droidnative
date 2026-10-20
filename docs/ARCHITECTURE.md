@@ -1,124 +1,143 @@
-# Architettura di DroidNative
+# DroidNative architecture
 
-## Scelta: Architettura B, predisposta per C
+## Choice: architecture B, ready for C
 
-| Opzione | Valutazione |
+| Option | Assessment |
 |---|---|
-| A — Fork di Waydroid | Scartata. Waydroid ha 968 issue aperte e rilasci frequenti; tutto ciò che serve (stato, app, proprietà, scelta GPU) è raggiungibile da CLI, D-Bus e `waydroid.cfg` senza modificarlo. Un fork impone un rebase continuo senza vantaggi tecnici. |
-| **B — Runtime manager indipendente** | **Adottata.** DroidNative orchestra Waydroid e gli stack GPU esistenti, aggiunge rilevamento, verifica dell'accelerazione, gestione APK e UI. |
-| C — Backend multipli | Predisposta: il runtime è dietro il trait `AndroidRuntime`, la GPU dietro i descrittori `GpuBackendKind`. ReDroid può essere aggiunto come secondo backend. |
+| A — Fork Waydroid | Rejected. Waydroid has 968 open issues and frequent releases; everything needed (state, apps, properties, GPU choice) is reachable through its CLI, D-Bus and `waydroid.cfg` without modifying it. A fork means rebasing forever with no technical gain. |
+| **B — Independent runtime manager** | **Adopted.** DroidNative orchestrates Waydroid and the existing GPU stacks, and adds detection, acceleration verification, APK management and the UI. |
+| C — Multiple backends | Prepared: the runtime sits behind the `AndroidRuntime` trait, the GPU behind the `GpuBackendKind` descriptors. ReDroid can be added as a second backend. |
 
-## Componenti
+## Components
 
 ```
 ┌───────────────────────────── app/ (Tauri 2) ─────────────────────────────┐
-│ React + TypeScript (UI)  ──invoke──▶  src-tauri (comandi Rust)           │
+│ React + TypeScript (UI)  ──invoke──▶  src-tauri (Rust commands)          │
 └──────────────────────────────────────┬───────────────────────────────────┘
-                                       │ libreria
+                                       │ library
 ┌──────────────────────── crates/droidnative-core ─────────────────────────┐
-│ host/      rilevamento sistema (os-release, kernel, binder, cgroups, …)  │
-│ gpu/       GPU, stack driver, backend GPU, verifica accelerazione        │
-│ runtime/   trait AndroidRuntime + backend Waydroid                       │
-│ apk/       ispezione APK (AndroidManifest binario, ABI, SHA-256)         │
-│ privileged operazioni root in elenco chiuso                              │
-│ extras     immagine GAPPS, traduzione ARM libndk, ID dispositivo Google  │
-│ report     report di compatibilità                                       │
+│ host/      system detection (os-release, kernel, binder, cgroups, …)     │
+│ gpu/       GPUs, driver stacks, GPU backends, acceleration check         │
+│ runtime/   AndroidRuntime trait + Waydroid backend                       │
+│ apk/       APK inspection (binary AndroidManifest, ABIs, SHA-256)        │
+│ privileged root operations from a closed list                            │
+│ extras     GAPPS image, ARM translation, Google device ID                │
+│ report     compatibility report                                          │
 └──────────────────────────────────────┬───────────────────────────────────┘
-                     pkexec (polkit)   │   come utente
+                     pkexec (polkit)   │   as the user
 ┌──────────────────────────────────────▼───────────────────────────────────┐
-│ droidnative priv <op>  (stesso binario CLI, solo operazioni ammesse)     │
+│ droidnative priv <op>  (same CLI binary, allowed operations only)        │
 │ waydroid CLI · D-Bus id.waydro.Container · /var/lib/waydroid/waydroid.cfg│
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Modello di sicurezza
+## Security model
 
-- La UI gira **senza privilegi**. Le operazioni root sono un `enum` chiuso
-  (`PrivilegedOp`) eseguito da `droidnative priv …` tramite `pkexec`: nessuna
-  stringa di shell arbitraria attraversa il confine dei privilegi.
-- Ogni argomento che entra in un'operazione privilegiata viene validato
-  (nomi package, chiavi di proprietà, nodi `/dev/dri/renderD*` reali).
-- I comandi esterni vengono lanciati senza shell, con `LC_ALL=C` (l'output è
-  analizzato in modo deterministico anche su sistemi localizzati) e timeout.
-- Mai usate le opzioni pericolose di `waydroid shell` (`-L`, `-C`, `-G`).
-- Gli APK vengono ispezionati prima dell'installazione (manifest, ABI,
-  SHA-256) e l'installazione è verificata confrontando il package con
-  l'elenco app: Waydroid restituisce 0 anche quando fallisce.
+- The UI runs **unprivileged**. Root operations are a closed `enum` (`PrivilegedOp`) run by
+  `droidnative priv …` through `pkexec`: no arbitrary shell string crosses the privilege
+  boundary.
+- Every argument entering a privileged operation is validated (package names, property keys,
+  real `/dev/dri/renderD*` nodes, translator names).
+- External commands run without a shell, with `LC_ALL=C` (output is parsed deterministically
+  on localized systems too) and timeouts.
+- `waydroid shell`'s dangerous options (`-L`, `-C`, `-G`) are never used.
+- APKs are inspected before installation (manifest, ABIs, SHA-256) and the install is
+  verified against Android's own commit signal: Waydroid returns 0 even when it fails.
+- Window mode and mouse-as-touch use `waydroid prop set` from the user session: no
+  privileges involved.
 
-## Backend GPU
+## GPU backends
 
-| Backend | Stack | Quando |
+| Backend | Stack | When |
 |---|---|---|
-| Mesa Native | Mesa (radeonsi/RADV, iris/ANV) via `drm_device` + gralloc gbm | AMD, Intel; GPU che pilota il compositor o import dmabuf verificato |
-| NVIDIA Accelerated | waydroid-nvidia `main`: Venus → virglrenderer host, GL ES via ANGLE | RTX 20+ con modulo open, driver ≥ 595.71, modeset=1, compositor su NVIDIA |
-| NVIDIA Experimental | waydroid-nvidia `public-test`: `nvidia-prolapse` (NVK + backend NVIDIA nel guest) | Stessi requisiti, componente sperimentale, solo Android 13 |
-| Software Fallback | SwiftShader | Sempre disponibile, mai dichiarato accelerato |
+| Mesa Native | Mesa (radeonsi/RADV, iris/ANV) via `drm_device` + gralloc gbm | AMD, Intel; the GPU driving the compositor, or a verified dmabuf import |
+| NVIDIA Accelerated | waydroid-nvidia `main`: Venus → host virglrenderer, GL ES through ANGLE | RTX 20+ with the open module, driver ≥ 595.71, modeset=1, compositor on NVIDIA |
+| NVIDIA Experimental | waydroid-nvidia `public-test`: `nvidia-prolapse` (NVK + NVIDIA backend in the guest) | Same requirements, experimental component, Android 13 only |
+| Software Fallback | SwiftShader | Always available, never reported as accelerated |
 
-### Installazione dello stack NVIDIA (`nvidia_stack.rs`)
+### Installing the NVIDIA stack (`nvidia_stack.rs`)
 
-1. Il rilascio è **fissato nel codice** (`PINNED_RELEASES`): tag, SHA-256 del file
-   `SHA256SUMS` e commit del sorgente. I valori sono stati fissati dopo aver
-   controllato l'attestazione di build GitHub di ogni file (`build.yml` al tag).
-2. Come root, in `/var/lib/droidnative/nvidia-stack/<tag>` (0700): download di
-   `SHA256SUMS` (hash confrontato col valore fissato), dei 6 file (ognuno confrontato
-   con la sua riga) e dell'archivio sorgente (commit letto dall'header pax di
-   `git archive` e confrontato col valore fissato). File già presenti e validi
-   vengono riusati; un file che non corrisponde viene cancellato.
-3. Rimozione degli override software di DroidNative da `waydroid.cfg`, poi `apt-get
-   purge waydroid` (il suo conffile `waydroid.menu` bloccherebbe l'installer, che non
-   sovrascrive file di pacchetti). Immagini e dati non sono file del pacchetto.
-4. `packaging/install.sh --tag <tag> --from <dir>` dall'archivio verificato: l'installer
-   ufficiale ricontrolla hash e coppia sorgente/binari e installa la Waydroid patchata.
-5. `waydroid-nvidia-setup --mode venus|nvidia-prolapse`; stato registrato in
+1. The release is **pinned in the code** (`PINNED_RELEASES`): tag, SHA-256 of the
+   `SHA256SUMS` file and source commit. The values were pinned after checking the GitHub build
+   attestation of every file (`build.yml` at the tag).
+2. As root, in `/var/lib/droidnative/nvidia-stack/<tag>` (0700): download `SHA256SUMS` (hash
+   compared with the pinned value), the 6 files (each compared with its line) and the source
+   archive (commit read from `git archive`'s pax header and compared with the pinned value).
+   Files already present and valid are reused; a file that does not match is deleted.
+3. Remove DroidNative's software overrides from `waydroid.cfg`, then `apt-get purge waydroid`
+   (its `waydroid.menu` conffile would block the installer, which does not overwrite package
+   files). Images and data are not package files.
+4. `packaging/install.sh --tag <tag> --from <dir>` from the verified archive: the official
+   installer checks hashes and the source/binary pair again and installs the patched Waydroid.
+5. `waydroid-nvidia-setup --mode venus|nvidia-prolapse`; state recorded in
    `/var/lib/droidnative/nvidia-stack.json`.
 
-In modalità `venus` DroidNative avvia il servizio utente `wd-venus.service` prima della
-sessione Android.
+In `venus` mode DroidNative starts the `wd-venus.service` user unit before the Android
+session.
 
-### Nodo della GPU NVIDIA a ogni avvio (`droidnative-render-node.service`)
+### The NVIDIA GPU's node at every boot (`droidnative-render-node.service`)
 
-waydroid-nvidia scrive in `drm_device` il nodo `/dev/dri/renderD<N>` della GPU NVIDIA solo
-quando applica una modalità, mentre il suo `ExecStartPre` (`driver-mode verify-active`)
-controlla soltanto. Sui sistemi ibridi i numeri seguono l'ordine di caricamento dei driver e
-possono scambiarsi tra un avvio e l'altro: il container allora non parte. Il pacchetto
-installa `droidnative-render-node.service` (oneshot, `ConditionPathExists` su
-`waydroid-nvidia-setup`, `After=` il dispositivo `sys-subsystem-waydroid_nvidia-render`) e un
-drop-in di `waydroid-container.service` che lo richiede e lo precede. Il servizio esegue
-`droidnative priv repin-render-node`: in modalità venus sceglie il nodo per produttore PCI
-(`0x10de`, come waydroid-nvidia), aggiorna `drm_device` e rigenera nodi LXC e proprietà con
-`waydroid upgrade -o`, che su un container fermo non usa né D-Bus né systemd. Non chiama mai
-`systemctl` sul container: un `stop` o `start` in quel momento si scontrerebbe con il job di
-avvio che lo sta aspettando. Dall'interfaccia la stessa operazione con `--start` avvia poi il
-container.
+waydroid-nvidia writes the NVIDIA GPU's `/dev/dri/renderD<N>` node into `drm_device` only when
+it applies a mode, while its `ExecStartPre` (`driver-mode verify-active`) only checks it. On
+hybrid systems the numbers follow driver load order and can swap from one boot to the next:
+the container then does not start. The package installs `droidnative-render-node.service`
+(oneshot, `ConditionPathExists` on `waydroid-nvidia-setup`, `After=` the
+`sys-subsystem-waydroid_nvidia-render` device) and a `waydroid-container.service` drop-in that
+wants it and orders itself after it. The service runs `droidnative priv repin-render-node`: in
+venus mode it picks the node by PCI vendor (`0x10de`, like waydroid-nvidia), updates
+`drm_device` and regenerates the LXC nodes and properties with `waydroid upgrade -o`, which uses
+neither D-Bus nor systemd on a stopped container. It never calls `systemctl` on the container:
+a `stop` or `start` at that moment would collide with the start job waiting for it. From the
+UI the same operation with `--start` then starts the container.
 
-## Google Play e traduzione ARM (`extras.rs`)
+## Google Play and ARM translation (`extras.rs`)
 
-**Cambio d'immagine** (`SwitchSystemImage`): `waydroid init -f -s GAPPS|VANILLA`. Prima
-e dopo, DroidNative si assicura che il container LXC sia fermo (`lxc-info`, poi
-`systemctl stop` e `waydroid container stop`): `waydroid init` riavvia il container fuori
-da systemd e `waydroid-nvidia-setup` rifiuterebbe di procedere. Con waydroid-nvidia la
-modalità letta da `waydroid.cfg` prima del cambio viene riattivata, perché `init -f`
-riscrive le proprietà del vendor. `init -f` conserva `[properties]` e l'overlay
-(`/var/lib/waydroid/overlay`), quindi anche libndk; i dati Android restano.
+**Image switch** (`SwitchSystemImage`): `waydroid init -f -s GAPPS|VANILLA`. Before and after,
+DroidNative makes sure the LXC container is stopped (`lxc-info`, then `systemctl stop` and
+`waydroid container stop`): `waydroid init` restarts the container outside systemd and
+`waydroid-nvidia-setup` would refuse to proceed. With waydroid-nvidia, the mode read from
+`waydroid.cfg` before the switch is re-activated, because `init -f` rewrites the vendor
+properties. `init -f` keeps `[properties]` and the overlay (`/var/lib/waydroid/overlay`), so
+the ARM translator too; Android data stays.
 
-**libndk** (`InstallArmTranslation`): archivio supremegamers per Android 13 fissato a
-commit e SHA-256 (lo stesso usato da waydroid_script). Come root, in
-`/var/lib/droidnative/libndk` (0700): download solo se il file in cache non corrisponde,
-verifica dell'hash, estrazione delle sole voci `*/prebuilts/` nell'overlay di sistema con
-rifiuto dei percorsi che escono dalla destinazione, permessi `root:shell 0755` per
-`bin/` e `root:root 0644` per il resto, elenco dei file installati in
-`/var/lib/droidnative/libndk-files.txt`. Le proprietà (`ro.product.cpu.abilist*`,
-`ro.dalvik.vm.native.bridge=libndk_translation.so`, `ro.enable.native.bridge.exec`,
-`ro.dalvik.vm.isa.arm*`) vanno in `[properties]`, poi `waydroid upgrade -o` e riavvio
-del container. La rimozione cancella solo i file elencati e le directory rimaste vuote,
-toglie le proprietà e annulla i gestori `binfmt_misc` che `ndk_translation.rc` registra
-nel kernel dell'host a ogni avvio di Android.
+**ARM translators** (`InstallArmTranslation { translator }`): Google's libndk and Intel's
+libhoudini, the supremegamers Android 13 archives pinned by commit and SHA-256 (the ones
+waydroid_script uses, whose MD5 matches). As root, in `/var/lib/droidnative/libndk` (0700,
+cache for both): download only when the cached file does not match, hash check, then removal
+of the previous translator's files and of its `binfmt_misc` handlers (the new ones register
+under the same names), extraction of the `*/prebuilts/` entries only into the system overlay,
+rejecting paths that leave the destination, `root:shell 0755` permissions for `bin/` and
+`root:root 0644` for the rest, list of the installed files in
+`/var/lib/droidnative/libndk-files.txt`. libhoudini's own `houdini.rc` reads its binfmt files
+from `/vendor/etc`, while in Waydroid they sit in the system overlay: DroidNative writes an
+`etc/init/houdini.rc` that reads them from `/system/etc`. The properties
+(`ro.product.cpu.abilist*`, `ro.dalvik.vm.native.bridge`, `ro.enable.native.bridge.exec*`,
+`ro.dalvik.vm.isa.arm*`) go into `[properties]`, followed by `waydroid upgrade -o` and a
+container restart. Removal deletes only the listed files and the directories left empty,
+drops the properties and unregisters the handlers the translator's init script registers in
+the host kernel at every Android boot. The default is libndk on AMD and libhoudini on Intel;
+some apps run with only one of them (Age of Empires Mobile aborts in libndk with “Guest call
+didn't restore sp” and runs with libhoudini).
 
-**ID dispositivo Google** (`GoogleDeviceId`): `sqlite3` nel container su
-`gservices.db` di Google Services Framework. La registrazione su
-google.com/android/uncertified la fa l'utente con il proprio account; l'app apre solo
-quell'URL, l'unico ammesso dalla capability `opener:allow-open-url`.
+**Google device ID** (`GoogleDeviceId`): `sqlite3` in the container on Google Services
+Framework's `gservices.db`. The user registers it at google.com/android/uncertified with
+their own account; the app only opens that URL, the only one the `opener:allow-open-url`
+capability allows.
 
-L'accelerazione è considerata **attiva solo dopo la verifica**: lettura della
-riga `GLES:` di `dumpsys SurfaceFlinger` nel container. Le proprietà
-`ro.hardware.egl`/`gralloc` indicano solo la configurazione.
+## Windows and input (`runtime/waydroid.rs`)
+
+**Window mode**: `persist.waydroid.multi_windows`. With `true`, Waydroid's init bind-mounts
+`pc.xml` (`android.hardware.type.pc`, `android.software.freeform_window_management`) and the
+hwcomposer gives every task its own Wayland toplevel; tasks open in `freeform` mode and
+resizing a task resizes its window. Android reads the features at boot, so the change restarts
+the session.
+
+**Mouse as touch**: `persist.waydroid.fake_touch`, a comma-separated list of packages (`*`
+globs allowed). Waydroid's `ViewRootImpl` patch reads it when an app creates a window and then
+rewrites the source of that window's mouse down/move/up events to touchscreen, so the change
+applies the next time the app opens. Android caps non-`ro.` property values at 91 characters;
+DroidNative refuses a list that would not fit instead of truncating it.
+
+Acceleration counts as **active only after verification**: reading the `GLES:` line of
+`dumpsys SurfaceFlinger` in the container. The `ro.hardware.egl`/`gralloc` properties only
+describe the configuration.

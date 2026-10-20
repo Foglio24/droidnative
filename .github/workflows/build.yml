@@ -12,12 +12,12 @@ permissions:
 
 jobs:
   deb:
-    name: Test e pacchetto .deb (Debian 12, glibc 2.36)
+    name: Tests and .deb package (Debian 12, glibc 2.36)
     runs-on: ubuntu-latest
     # The oldest supported base: a package built here also installs on Ubuntu 24.04+ and Debian 12+.
     container: debian:12
     steps:
-      - name: Dipendenze di sistema
+      - name: System dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config file \
@@ -35,32 +35,32 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Test Rust
+      - name: Rust tests
         run: cargo test --workspace --locked
 
-      - name: Dipendenze frontend e typecheck
+      - name: Frontend dependencies and typecheck
         working-directory: app
         run: |
           npm ci
           npm run typecheck
 
-      - name: Helper privilegiato (droidnative)
+      - name: Privileged helper (droidnative)
         run: cargo build --release --locked -p droidnative-cli
 
-      - name: Pacchetto .deb
+      - name: .deb package
         working-directory: app
         run: npx tauri build --bundles deb
 
-      - name: Controllo del pacchetto e checksum
+      - name: Package check and checksums
         run: |
           cd target/release/bundle/deb
           dpkg-deb -I ./*.deb
           dpkg-deb -c ./*.deb > contents.txt
           for f in usr/bin/droidnative usr/bin/droidnative-app io.droidnative.policy droidnative.desktop \
                    droidnative-render-node.service waydroid-container.service.d/droidnative-render-node.conf; do
-            grep -q -- "$f\$" contents.txt || { echo "manca $f nel pacchetto"; exit 1; }
+            grep -q -- "$f\$" contents.txt || { echo "$f missing from the package"; exit 1; }
           done
-          dpkg-deb --ctrl-tarfile ./*.deb | tar -t | grep -qxE '(\./)?postinst' || { echo "manca postinst"; exit 1; }
+          dpkg-deb --ctrl-tarfile ./*.deb | tar -t | grep -qxE '(\./)?postinst' || { echo "postinst missing"; exit 1; }
           rm contents.txt
           sha256sum ./*.deb | sed 's# \./# #' > SHA256SUMS
           cat SHA256SUMS
@@ -90,18 +90,18 @@ jobs:
           name: droidnative-deb
           path: dist
 
-      - name: Attestazione di provenienza
+      - name: Provenance attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*.deb
 
-      - name: Pubblicazione
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="$GITHUB_REF_NAME"
           notes="release-notes/${tag}.md"
-          [ -f "$notes" ] || { echo "manca $notes"; exit 1; }
+          [ -f "$notes" ] || { echo "$notes missing"; exit 1; }
           export GH_REPO="$GITHUB_REPOSITORY"
           # Draft first, assets with retries, published only once the uploaded .deb matches the
           # attested one: a transient GitHub error must never leave a half-published release.
@@ -111,7 +111,7 @@ jobs:
             if gh release upload "$tag" dist/*.deb dist/SHA256SUMS --clobber; then ok=1; break; fi
             sleep 20
           done
-          [ -n "$ok" ] || { echo "upload non riuscito"; exit 1; }
+          [ -n "$ok" ] || { echo "upload failed"; exit 1; }
           rm -rf check && gh release download "$tag" --pattern '*.deb' --dir check
           (cd check && sha256sum -c ../dist/SHA256SUMS)
           gh release edit "$tag" --draft=false --latest

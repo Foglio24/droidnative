@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     validate_apk_path, validate_package_name, validate_prop_key, AndroidApp, AndroidRuntime, GraphicsConfig, InstallOutcome,
-    RuntimeError, RuntimeStatus, SessionState,
+    RuntimeError, RuntimeStatus, SessionState, WindowMode, PROP_VALUE_LIMIT,
 };
 use crate::apk::ApkInfo;
 use crate::exec::{CmdOutput, CommandRunner, SystemRunner};
@@ -30,6 +30,8 @@ pub const WAYDROID_WORK: &str = "/var/lib/waydroid";
 pub const WAYDROID_CFG: &str = "/var/lib/waydroid/waydroid.cfg";
 pub const WAYDROID_LOG: &str = "/var/lib/waydroid/waydroid.log";
 pub const CONTAINER_UNIT: &str = "waydroid-container.service";
+const FAKE_TOUCH: &str = "persist.waydroid.fake_touch";
+const MULTI_WINDOWS: &str = "persist.waydroid.multi_windows";
 pub const DHCP_LEASES: &str = "/var/lib/misc/dnsmasq.waydroid0.leases";
 const PREINSTALLED_IMAGE_DIRS: &[&str] = &["/etc/waydroid-extra/images", "/usr/share/waydroid-extra/images"];
 
@@ -88,8 +90,9 @@ pub struct WaydroidInstall {
     pub nvidia_stack: Option<crate::nvidia_stack::StackState>,
     /// VANILLA / GAPPS / FOSS, from the system OTA channel.
     pub system_image: Option<crate::extras::SystemImage>,
-    /// libndk ARM translation present in the overlay and enabled.
+    /// An ARM translator present in the overlay and enabled.
     pub arm_translation: bool,
+    pub arm_translator: Option<crate::extras::Translator>,
     /// venus mode with drm_device on another GPU's node: waydroid-nvidia refuses to start the container.
     pub stale_render_node: Option<crate::nvidia_stack::StaleRenderNode>,
 }
@@ -177,6 +180,7 @@ pub fn detect_install(probe: &Probe) -> WaydroidInstall {
         nvidia_stack: crate::nvidia_stack::read_state(fs),
         system_image: config_text.as_deref().map(crate::extras::system_image),
         arm_translation: config_text.as_deref().map(|t| crate::extras::arm_translation_installed(fs, t)).unwrap_or(false),
+        arm_translator: config_text.as_deref().and_then(|t| crate::extras::arm_translator(fs, t)),
         stale_render_node: config_text.as_deref().and_then(|t| crate::nvidia_stack::stale_render_node(fs, t)),
     }
 }
@@ -496,6 +500,44 @@ impl AndroidRuntime for WaydroidRuntime {
         Ok(out.stdout.lines().rev().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('[')).map(str::to_string))
     }
 
+    fn fake_touch(&self) -> Result<Vec<String>, RuntimeError> {
+        let value = self.get_prop(FAKE_TOUCH)?.unwrap_or_default();
+        Ok(value.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
+    }
+
+    fn set_fake_touch(&self, package: &str, enabled: bool) -> Result<Vec<String>, RuntimeError> {
+        validate_package_name(package)?;
+        let mut list = self.fake_touch()?;
+        list.retain(|p| p != package);
+        if enabled {
+            list.push(package.to_string());
+        }
+        let value = list.join(",");
+        if value.len() > PROP_VALUE_LIMIT {
+            return Err(RuntimeError::InvalidInput(tr!(
+                "Android accetta al massimo {PROP_VALUE_LIMIT} caratteri per l'elenco delle app con il mouse come tocco: disattivalo per un'altra app",
+                "Android accepts at most {PROP_VALUE_LIMIT} characters for the list of apps with mouse as touch: turn it off for another app"
+            )));
+        }
+        self.run_checked(&["prop", "set", FAKE_TOUCH, &value], Duration::from_secs(20))?;
+        Ok(list)
+    }
+
+    fn window_mode(&self) -> Result<WindowMode, RuntimeError> {
+        Ok(match self.get_prop(MULTI_WINDOWS)?.as_deref() {
+            Some("true") => WindowMode::Multi,
+            _ => WindowMode::Single,
+        })
+    }
+
+    fn set_window_mode(&self, mode: WindowMode) -> Result<(), RuntimeError> {
+        self.ensure_running()?;
+        let value = if mode == WindowMode::Multi { "true" } else { "false" };
+        self.run_checked(&["prop", "set", MULTI_WINDOWS, value], Duration::from_secs(20))?;
+        self.restart_session()?;
+        Ok(())
+    }
+
     fn graphics_config(&self) -> Result<GraphicsConfig, RuntimeError> {
         Ok(GraphicsConfig {
             egl: self.get_prop("ro.hardware.egl")?,
@@ -653,6 +695,23 @@ mod tests {
     fn start_requires_initialization() {
         let (rt, _, _d) = runtime(FakeRunner::new(), false);
         assert!(matches!(rt.start_session(), Err(RuntimeError::NotInitialized)));
+    }
+
+    #[test]
+    fn fake_touch_list_keeps_other_entries_and_android_limit() {
+        let runner = FakeRunner::new()
+            .respond("/usr/bin/waydroid status", CmdOutput::ok(RUNNING))
+            .respond("/usr/bin/waydroid prop get persist.waydroid.fake_touch", CmdOutput::ok("[12:00:00] log line\ncom.rovio.*,com.a.b\n"))
+            .respond("/usr/bin/waydroid prop set persist.waydroid.fake_touch com.rovio.*,com.a.b,com.c.d", CmdOutput::ok(""))
+            .respond("/usr/bin/waydroid prop set persist.waydroid.fake_touch com.rovio.*", CmdOutput::ok(""));
+        let (rt, runner, _d) = runtime(runner, true);
+        assert_eq!(rt.fake_touch().unwrap(), vec!["com.rovio.*", "com.a.b"]);
+        assert_eq!(rt.set_fake_touch("com.c.d", true).unwrap(), vec!["com.rovio.*", "com.a.b", "com.c.d"]);
+        assert_eq!(rt.set_fake_touch("com.a.b", false).unwrap(), vec!["com.rovio.*"]);
+        let long = format!("com.{}", "x".repeat(80));
+        assert!(matches!(rt.set_fake_touch(&long, true), Err(RuntimeError::InvalidInput(_))));
+        assert!(!runner.calls().iter().any(|c| c.contains(&long)), "an over-long value is never sent");
+        assert!(rt.set_fake_touch("-rf", true).is_err(), "package names are validated");
     }
 
     #[test]

@@ -1,124 +1,124 @@
-# Report di compatibilità DroidNative
+# DroidNative compatibility report
 
-Host: **pc-di-sviluppo** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.3.0
+Host: **dev-pc** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.4.0
 
-**Esito: compatibile**
+**Result: compatible**
 
-## Sistema
+## System
 
-| | Controllo | Dettaglio |
+| | Check | Detail |
 |---|---|---|
-| ✅ | Distribuzione | AnduinOS 2.0.4 — base Ubuntu 26.04 (resolute) |
+| ✅ | Distribution | AnduinOS 2.0.4 — base Ubuntu 26.04 (resolute) |
 | ✅ | CPU | AMD Ryzen 7 7700X 8-Core Processor · 16 thread · x86_64 |
-| ✅ | Memoria RAM | 30.5 GiB totali, 19.7 GiB disponibili |
-| ✅ | Spazio disco | 30.6 GiB liberi per /var/lib/waydroid |
-| ✅ | systemd | systemd 259 (259.5-0ubuntu3.4) |
+| ✅ | Memory | 30.5 GiB total, 21.3 GiB available |
+| ✅ | Disk space | 23.4 GiB free for /var/lib/waydroid |
+| ✅ | systemd | systemd 259 (259.9-0ubuntu0.1) |
 
-## Kernel e container
+## Kernel and container
 
-| | Controllo | Dettaglio |
+| | Check | Detail |
 |---|---|---|
 | ℹ️ | Kernel | 7.0.0-38-generic |
-| ✅ | Binder / binderfs | attivo (/dev/anbox-binder, /dev/anbox-hwbinder, /dev/anbox-vndbinder, /dev/binderfs/anbox-binder, /dev/binderfs/anbox-hwbinder, /dev/binderfs/anbox-vndbinder, /dev/binderfs/binder-control) |
-| ✅ | Namespace Linux | cgroup, ipc, mnt, net, pid, pid_for_children, time, time_for_children, user, uts |
+| ✅ | Binder / binderfs | active (/dev/anbox-binder, /dev/anbox-hwbinder, /dev/anbox-vndbinder, /dev/binderfs/anbox-binder, /dev/binderfs/anbox-hwbinder, /dev/binderfs/anbox-vndbinder, /dev/binderfs/binder-control) |
+| ✅ | Linux namespaces | cgroup, ipc, mnt, net, pid, pid_for_children, time, time_for_children, user, uts |
 | ✅ | cgroup v2 | cpuset cpu io memory hugetlb pids rdma misc dmem |
-| ✅ | Pressure Stall Information | attivo (necessario a lmkd di Android) |
-| ℹ️ | Moduli di sicurezza | lockdown, capability, landlock, yama, apparmor, ima, evm · AppArmor attivo (profili Waydroid applicati) |
-| ℹ️ | KVM | disponibile (non necessario: Android gira in container) |
+| ✅ | Pressure Stall Information | active (needed by Android's lmkd) |
+| ℹ️ | Security modules | lockdown, capability, landlock, yama, apparmor, ima, evm · AppArmor active (Waydroid profiles applied) |
+| ℹ️ | KVM | available (not needed: Android runs in a container) |
 
-## Grafica
+## Graphics
 
-| | Controllo | Dettaglio |
+| | Check | Detail |
 |---|---|---|
-| ✅ | Sessione grafica | Wayland · GNOME · Mutter |
-| ℹ️ | NVIDIA GeForce RTX 4070 Ti SUPER | 0000:01:00.0 · driver nvidia · /dev/dri/renderD129 · 16.0 GiB VRAM · pilota il display (DP-5) |
-| ℹ️ | AMD Raphael | 0000:09:00.0 · driver amdgpu · /dev/dri/renderD128 · 0.5 GiB VRAM |
-| ℹ️ | Driver NVIDIA | 615.71.09 · modulo open · modeset attivo · backend GBM sì · egl-wayland sì |
+| ✅ | Graphical session | Wayland · GNOME · Mutter |
+| ℹ️ | NVIDIA GeForce RTX 4070 Ti SUPER | 0000:01:00.0 · driver nvidia · /dev/dri/renderD128 · 16.0 GiB VRAM · drives the display (DP-1) |
+| ℹ️ | AMD Raphael | 0000:09:00.0 · driver amdgpu · /dev/dri/renderD129 · 0.5 GiB VRAM |
+| ℹ️ | NVIDIA driver | 615.71.09 · open module · modeset on · GBM backend yes · egl-wayland yes |
 | ℹ️ | Mesa | 26.0.8 (dpkg:libgl1-mesa-dri) |
 | ℹ️ | Vulkan | loader 1.4.341.0 · ICD: asahi_icd 1.4.335, gfxstream_vk_icd 1.1.335, intel_hasvk_icd 1.3.335, intel_icd 1.4.335, lvp_icd 1.4.335, nouveau_icd 1.4.335, nvidia_icd 1.4.351, radeon_icd 1.4.335, virtio_icd 1.4.335 |
-| ℹ️ | Dispositivo Vulkan | NVIDIA GeForce RTX 4070 Ti SUPER · NVIDIA · API 1.4.351 |
-| ℹ️ | Dispositivo Vulkan | AMD Ryzen 7 7700X 8-Core Processor (RADV RAPHAEL_MENDOCINO) · radv · API 1.4.335 |
-| ℹ️ | Dispositivo Vulkan | llvmpipe (LLVM 21.1.8, 256 bits) · llvmpipe · API 1.4.335 |
-| ℹ️ | OpenGL host | NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2 · 4.6.0 NVIDIA 615.71.09 |
-| ℹ️ | /dev/udmabuf | presente e accessibile |
+| ℹ️ | Vulkan device | NVIDIA GeForce RTX 4070 Ti SUPER · NVIDIA · API 1.4.351 |
+| ℹ️ | Vulkan device | AMD Ryzen 7 7700X 8-Core Processor (RADV RAPHAEL_MENDOCINO) · radv · API 1.4.335 |
+| ℹ️ | Vulkan device | llvmpipe (LLVM 21.1.8, 256 bits) · llvmpipe · API 1.4.335 |
+| ℹ️ | Host OpenGL | NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2 · 4.6.0 NVIDIA 615.71.09 |
+| ℹ️ | /dev/udmabuf | present and accessible |
 
-## Runtime Android
+## Android runtime
 
-| | Controllo | Dettaglio |
+| | Check | Detail |
 |---|---|---|
 | ✅ | LXC | 6.0.6 |
 | ✅ | Waydroid | 1.6.3 (/usr/bin/waydroid) |
-| ✅ | Immagini Android | 2 immagini · MAINLINE |
-| ✅ | Servizio container | waydroid-container.service attivo |
-| ✅ | Rete del container | dnsmasq + nftables/iptables presenti |
-| ✅ | Rete di Android | indirizzo 192.168.240.112 assegnato dal DHCP del container |
-| ✅ | Servizi Google | Play Store e Google Play Services presenti (immagine GAPPS) |
-| ✅ | Traduzione ARM | libndk attiva: app con solo codice ARM supportate |
-| ✅ | Elevazione privilegi (polkit) | /usr/bin/pkexec |
-| ℹ️ | Installazioni preesistenti | config Waydroid presente; dati utente in ~/.local/share/waydroid; waydroid-nvidia (/usr/bin/waydroid-nvidia-setup) |
+| ✅ | Android images | 2 images · MAINLINE |
+| ✅ | Container service | waydroid-container.service active |
+| ✅ | Container network | dnsmasq + nftables/iptables present |
+| ✅ | Android network | address 192.168.240.112 assigned by the container DHCP |
+| ✅ | Google services | Play Store and Google Play Services present (GAPPS image) |
+| ✅ | ARM translation | libhoudini active: ARM-only apps supported |
+| ✅ | Privilege elevation (polkit) | /usr/bin/pkexec |
+| ℹ️ | Existing installations | Waydroid config present; user data in ~/.local/share/waydroid; waydroid-nvidia (/usr/bin/waydroid-nvidia-setup) |
 
-## Backend GPU
+## GPU backends
 
-**Consigliato: NVIDIA Accelerated** — Il display è sulla GPU NVIDIA e i requisiti di Venus sono soddisfatti: è il percorso hardware più collaudato per questa configurazione.
+**Recommended: NVIDIA Accelerated** — The display is on the NVIDIA GPU and Venus' requirements are met: it's the most tested hardware path for this setup.
 
-### Mesa Native — non supportato su questo sistema
+### Mesa Native — not supported on this system
 
-Android usa direttamente il nodo render della GPU tramite Mesa (gralloc gbm + EGL mesa).
+Android renders directly on the GPU render node through Mesa (gbm gralloc + Mesa EGL).
 
-Dispositivo: AMD Raphael (/dev/dri/renderD128)
+Device: AMD Raphael (/dev/dri/renderD129)
 
-- ✅ **GPU compatibile Mesa**: AMD Raphael (amdgpu) → /dev/dri/renderD128
-- ✅ **Accesso al nodo render**: consentito all'utente
-- ❌ **Compositor sulla stessa GPU**: lo schermo è su NVIDIA GeForce RTX 4070 Ti SUPER: il compositor non riesce a importare i buffer di AMD Raphael (il driver NVIDIA importa dmabuf LINEAR di altri vendor solo come GL_TEXTURE_EXTERNAL_OES). Verificato su GNOME/Mutter: «failed to import supplied dmabufs: Could not bind the given EGLImage to a CoglTexture2D», poi crash dell'hwcomposer appena Android apre una finestra. — *Collega il monitor alla GPU AMD/Intel, oppure usa un backend NVIDIA o il fallback software*
-- ✅ **Sessione Wayland**: Mutter
-- ✅ **Binder nel kernel**: disponibile
+- ✅ **Mesa-compatible GPU**: AMD Raphael (amdgpu) → /dev/dri/renderD129
+- ✅ **Render node access**: allowed for the user
+- ❌ **Compositor on the same GPU**: the display is on NVIDIA GeForce RTX 4070 Ti SUPER: the compositor cannot import AMD Raphael's buffers (the NVIDIA driver imports other vendors' LINEAR dmabufs only as GL_TEXTURE_EXTERNAL_OES). Seen on GNOME/Mutter: “failed to import supplied dmabufs: Could not bind the given EGLImage to a CoglTexture2D”, then the hwcomposer crashes as soon as Android opens a window. — *Connect the monitor to the AMD/Intel GPU, or use an NVIDIA backend or the software fallback*
+- ✅ **Wayland session**: Mutter
+- ✅ **Kernel binder**: available
 - ✅ **Waydroid**: 1.6.3
 
-### NVIDIA Accelerated — pronto (accelerazione da verificare all'avvio)
+### NVIDIA Accelerated — ready (acceleration to be verified at start)
 
-Vulkan di Android inoltrato via Mesa Venus a un render server host sul driver NVIDIA; GL ES tramite ANGLE.
+Android's Vulkan is forwarded through Mesa Venus to a host render server on the NVIDIA driver; GL ES via ANGLE.
 
-Dispositivo: NVIDIA GeForce RTX 4070 Ti SUPER (/dev/dri/renderD129)
+Device: NVIDIA GeForce RTX 4070 Ti SUPER (/dev/dri/renderD128)
 
-- ✅ **GPU NVIDIA supportata**: NVIDIA GeForce RTX 4070 Ti SUPER — architettura Ada
-- ⚠️ **Bug noto del driver su Ada**: redroid-nvidia ha riprodotto su RTX 4060 un SIGABRT di SurfaceFlinger (vn_ring_submit_locked) causato da un'asserzione nel driver kernel NVIDIA, aperto upstream
-- ✅ **Modulo kernel open**: open-gpu-kernel-modules (DMA-BUF disponibile)
+- ✅ **Supported NVIDIA GPU**: NVIDIA GeForce RTX 4070 Ti SUPER — Ada architecture
+- ⚠️ **Known driver bug on Ada**: redroid-nvidia reproduced a SurfaceFlinger SIGABRT (vn_ring_submit_locked) on an RTX 4060, caused by an NVIDIA kernel driver assertion; open upstream
+- ✅ **Open kernel module**: open-gpu-kernel-modules (DMA-BUF available)
 - ✅ **Driver ≥ 595.71**: 615.71.09
-- ✅ **nvidia-drm.modeset=1**: attivo
-- ✅ **Compositor sulla GPU NVIDIA**: schermo su NVIDIA GeForce RTX 4070 Ti SUPER (DP-5)
-- ✅ **Sessione Wayland**: Mutter
-- ⚠️ **Compositor testato upstream**: Mutter: upstream testa solo KWin / Plasma 6
-- ✅ **Accesso a /dev/udmabuf**: consentito
-- ✅ **Binder nel kernel**: disponibile
+- ✅ **nvidia-drm.modeset=1**: on
+- ✅ **Compositor on the NVIDIA GPU**: display on NVIDIA GeForce RTX 4070 Ti SUPER (DP-1)
+- ✅ **Wayland session**: Mutter
+- ⚠️ **Compositor tested upstream**: Mutter: upstream tests KWin / Plasma 6 only
+- ✅ **Access to /dev/udmabuf**: allowed
+- ✅ **Kernel binder**: available
 - ✅ **Waydroid**: 1.6.3
-- ✅ **waydroid-nvidia**: v0.2.0-rc7, modalità venus attiva
+- ✅ **waydroid-nvidia**: v0.2.0-rc7, venus mode active
 
-### NVIDIA Experimental — compatibile, richiede installazione
+### NVIDIA Experimental — compatible, needs installation
 
-Driver open-source (NVK + backend NVIDIA) eseguito direttamente dentro Android, senza proxy; decodifica video HW.
+Open-source driver (NVK + NVIDIA backend) running directly inside Android, no proxy; hardware video decode.
 
-Dispositivo: NVIDIA GeForce RTX 4070 Ti SUPER (/dev/dri/renderD129)
+Device: NVIDIA GeForce RTX 4070 Ti SUPER (/dev/dri/renderD128)
 
-- ⚠️ **GPU NVIDIA supportata**: NVIDIA GeForce RTX 4070 Ti SUPER — architettura Ada: 🧪 in upstream (Waydroid confermato solo su RTX 50)
-- ✅ **Driver NVIDIA**: 615.71.09 (modulo open): ✅ upstream
-- ✅ **nvidia-drm.modeset=1**: attivo
-- ✅ **Compositor sulla GPU NVIDIA**: schermo su NVIDIA GeForce RTX 4070 Ti SUPER (DP-5)
-- ✅ **Sessione Wayland**: Mutter
-- ⚠️ **Compositor testato upstream**: Mutter: upstream testa solo KWin / Plasma 6
-- ℹ️ **Versione Android**: solo immagine ufficiale Android 13 (LineageOS 20)
-- ✅ **Binder nel kernel**: disponibile
+- ⚠️ **Supported NVIDIA GPU**: NVIDIA GeForce RTX 4070 Ti SUPER — Ada architecture: 🧪 upstream (Waydroid confirmed on RTX 50 only)
+- ✅ **NVIDIA driver**: 615.71.09 (open module): ✅ upstream
+- ✅ **nvidia-drm.modeset=1**: on
+- ✅ **Compositor on the NVIDIA GPU**: display on NVIDIA GeForce RTX 4070 Ti SUPER (DP-1)
+- ✅ **Wayland session**: Mutter
+- ⚠️ **Compositor tested upstream**: Mutter: upstream tests KWin / Plasma 6 only
+- ℹ️ **Android version**: official Android 13 image only (LineageOS 20)
+- ✅ **Kernel binder**: available
 - ✅ **Waydroid**: 1.6.3
-- 📦 **waydroid-nvidia**: v0.2.0-rc7 installato, modalità attiva: venus — *Seleziona questo backend: DroidNative esegue waydroid-nvidia-setup --mode nvidia-prolapse*
+- 📦 **waydroid-nvidia**: v0.2.0-rc7 installed, active mode: venus — *Select this backend: DroidNative runs waydroid-nvidia-setup --mode nvidia-prolapse*
 
-### Software Fallback — pronto (accelerazione da verificare all'avvio)
+### Software Fallback — ready (acceleration to be verified at start)
 
-Rendering CPU con SwiftShader. Sempre disponibile, mai considerato accelerato.
+CPU rendering with SwiftShader. Always available, never reported as accelerated.
 
-Dispositivo: CPU (SwiftShader)
+Device: CPU (SwiftShader)
 
-- ⚠️ **Prestazioni**: rendering su CPU: giochi e app 3D lenti, nessuna accelerazione
-- ✅ **Sessione Wayland**: Mutter
-- ✅ **Binder nel kernel**: disponibile
+- ⚠️ **Performance**: CPU rendering: games and 3D apps are slow, no acceleration
+- ✅ **Wayland session**: Mutter
+- ✅ **Kernel binder**: available
 - ✅ **Waydroid**: 1.6.3
 
-> Nessun backend è dichiarato attivo finché DroidNative non legge il renderer reale di SurfaceFlinger (`droidnative verify-gpu`).
+> No backend is reported active until DroidNative reads SurfaceFlinger's real renderer (`droidnative verify-gpu`).

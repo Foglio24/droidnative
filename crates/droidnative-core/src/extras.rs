@@ -1,13 +1,13 @@
-//! Android extras: Google services (official GAPPS system image) and ARM translation (libndk).
+//! Android extras: Google services (official GAPPS system image) and ARM translation.
 //!
 //! GAPPS: `waydroid init -f -s GAPPS` swaps the system image and keeps apps and data; with the
 //! waydroid-nvidia patched Waydroid, `waydroid-nvidia-setup` must run again afterwards or the
 //! container refuses to start. Google then needs the device's GSF Android ID registered at
 //! <https://www.google.com/android/uncertified> by the account owner.
 //!
-//! libndk: Google's ARM→x86 translator as packaged by supremegamers (the archive
-//! casualsnek/waydroid_script installs for Android 13), pinned here by commit and SHA-256,
-//! copied into Waydroid's static system overlay plus the native-bridge properties.
+//! ARM translation: Google's libndk or Intel's libhoudini as packaged by supremegamers (the
+//! archives casualsnek/waydroid_script installs for Android 13), pinned here by commit and
+//! SHA-256, copied into Waydroid's static system overlay plus the native-bridge properties.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -24,12 +24,14 @@ use crate::runtime::waydroid::{CONTAINER_UNIT, WAYDROID_CFG};
 use crate::tr;
 
 pub const OVERLAY_SYSTEM: &str = "/var/lib/waydroid/overlay/system";
-pub const LIBNDK_WORK: &str = "/var/lib/droidnative/libndk";
-pub const LIBNDK_MANIFEST: &str = "/var/lib/droidnative/libndk-files.txt";
+/// Cache of the verified archives (named after the first translator; holds both).
+pub const TRANSLATION_CACHE: &str = "/var/lib/droidnative/libndk";
+/// Files the active translator put in the overlay (path kept from 0.3.0 installs).
+pub const TRANSLATION_MANIFEST: &str = "/var/lib/droidnative/libndk-files.txt";
 pub const UNCERTIFIED_URL: &str = "https://www.google.com/android/uncertified";
 const BINFMT_MISC: &str = "/proc/sys/fs/binfmt_misc";
-/// Entries registered by libndk's `ndk_translation.rc` (Android 13 package).
-const LIBNDK_BINFMT: &[&str] = &["arm_exe", "arm_dyn", "arm64_exe", "arm64_dyn"];
+/// Entries both translators' init scripts register in the host kernel (Android 13 packages).
+const TRANSLATION_BINFMT: &[&str] = &["arm_exe", "arm_dyn", "arm64_exe", "arm64_dyn"];
 
 pub struct PinnedArchive {
     pub url: &'static str,
@@ -44,6 +46,14 @@ pub const LIBNDK_A13: PinnedArchive = PinnedArchive {
     sha256: "a142d1586c9eafb5edf62277110f2128bc03066179a6783bcaa33ee322e1cbd0",
 };
 
+/// Intel's libhoudini, Android 13 build used by waydroid_script (`stuff/houdini.py`,
+/// md5 37fe0899f1e4da7f9a724cca1c1ab1ea).
+pub const LIBHOUDINI_A13: PinnedArchive = PinnedArchive {
+    url: "https://github.com/supremegamers/vendor_intel_proprietary_houdini/archive/2f8f088671182e17e67321e098e8411a3972a628.zip",
+    commit: "2f8f088671182e17e67321e098e8411a3972a628",
+    sha256: "2e82cdc88ddc4d418f7fb861aeebb7c49c83a91b97f57da10510b5e1146a4ed5",
+};
+
 pub const LIBNDK_PROPS: &[(&str, &str)] = &[
     ("ro.product.cpu.abilist", "x86_64,x86,arm64-v8a,armeabi-v7a,armeabi"),
     ("ro.product.cpu.abilist32", "x86,armeabi-v7a,armeabi"),
@@ -56,6 +66,105 @@ pub const LIBNDK_PROPS: &[(&str, &str)] = &[
     ("ro.dalvik.vm.isa.arm", "x86"),
     ("ro.dalvik.vm.isa.arm64", "x86_64"),
 ];
+
+/// The package's houdini.mk properties plus the ABI lists Waydroid's image does not carry.
+pub const LIBHOUDINI_PROPS: &[(&str, &str)] = &[
+    ("ro.product.cpu.abilist", "x86_64,x86,arm64-v8a,armeabi-v7a,armeabi"),
+    ("ro.product.cpu.abilist32", "x86,armeabi-v7a,armeabi"),
+    ("ro.product.cpu.abilist64", "x86_64,arm64-v8a"),
+    ("ro.dalvik.vm.native.bridge", "libhoudini.so"),
+    ("ro.enable.native.bridge.exec", "1"),
+    ("ro.enable.native.bridge.exec64", "1"),
+    ("ro.dalvik.vm.isa.arm", "x86"),
+    ("ro.dalvik.vm.isa.arm64", "x86_64"),
+];
+
+/// The package's houdini.rc reads its binfmt_misc files from /vendor/etc; in Waydroid they sit in
+/// the system overlay (waydroid_script rewrites the file for the same reason).
+const HOUDINI_RC: &str = "# Written by DroidNative: binfmt_misc files from the system overlay
+on early-init
+    mount binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+
+on property:ro.enable.native.bridge.exec=1
+    copy /system/etc/binfmt_misc/arm_exe /proc/sys/fs/binfmt_misc/register
+    copy /system/etc/binfmt_misc/arm_dyn /proc/sys/fs/binfmt_misc/register
+
+on property:ro.enable.native.bridge.exec64=1
+    copy /system/etc/binfmt_misc/arm64_exe /proc/sys/fs/binfmt_misc/register
+    copy /system/etc/binfmt_misc/arm64_dyn /proc/sys/fs/binfmt_misc/register
+";
+
+/// ARM→x86 translators Android 13 can load as native bridge. Some apps run only with one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Translator {
+    /// Google's libndk_translation (from Chromebooks).
+    #[default]
+    Libndk,
+    /// Intel's libhoudini.
+    Libhoudini,
+}
+
+impl Translator {
+    pub const ALL: [Translator; 2] = [Translator::Libndk, Translator::Libhoudini];
+
+    pub fn as_arg(self) -> &'static str {
+        match self {
+            Self::Libndk => "libndk",
+            Self::Libhoudini => "libhoudini",
+        }
+    }
+
+    pub fn from_arg(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.as_arg() == s)
+    }
+
+    pub fn archive(self) -> &'static PinnedArchive {
+        match self {
+            Self::Libndk => &LIBNDK_A13,
+            Self::Libhoudini => &LIBHOUDINI_A13,
+        }
+    }
+
+    /// The native-bridge library, as `ro.dalvik.vm.native.bridge` names it.
+    pub fn library(self) -> &'static str {
+        match self {
+            Self::Libndk => "libndk_translation.so",
+            Self::Libhoudini => "libhoudini.so",
+        }
+    }
+
+    pub fn props(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Libndk => LIBNDK_PROPS,
+            Self::Libhoudini => LIBHOUDINI_PROPS,
+        }
+    }
+
+    /// Overlay files (relative to the system overlay) written over the archive's own.
+    fn overrides(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Libndk => &[],
+            Self::Libhoudini => &[("etc/init/houdini.rc", HOUDINI_RC)],
+        }
+    }
+
+    /// The usual advice (Arch wiki, waydroid_script): libndk on AMD, libhoudini on Intel.
+    pub fn recommended(cpu_vendor: Option<&str>) -> Self {
+        if cpu_vendor.is_some_and(|v| v.contains("Intel")) {
+            Self::Libhoudini
+        } else {
+            Self::Libndk
+        }
+    }
+
+    pub fn other(self) -> Self {
+        match self {
+            Self::Libndk => Self::Libhoudini,
+            Self::Libhoudini => Self::Libndk,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,10 +189,15 @@ pub fn system_image(cfg_text: &str) -> SystemImage {
     }
 }
 
-/// Translation is active when the library sits in the overlay and the bridge property is set.
+/// The active translator: its library sits in the overlay and the bridge property names it.
+pub fn arm_translator(fs: &HostFs, cfg_text: &str) -> Option<Translator> {
+    let ini = Ini::parse(cfg_text);
+    let bridge = ini.get("properties", "ro.dalvik.vm.native.bridge")?;
+    Translator::ALL.into_iter().find(|t| bridge == t.library() && fs.exists(format!("{OVERLAY_SYSTEM}/lib64/{}", t.library())))
+}
+
 pub fn arm_translation_installed(fs: &HostFs, cfg_text: &str) -> bool {
-    fs.exists(format!("{OVERLAY_SYSTEM}/lib64/libndk_translation.so"))
-        && Ini::parse(cfg_text).get("properties", "ro.dalvik.vm.native.bridge") == Some("libndk_translation.so")
+    arm_translator(fs, cfg_text).is_some()
 }
 
 fn step(cmd: &dyn CommandRunner, log: &mut String, program: &str, args: &[&str], timeout: Duration) -> Result<CmdOutput, PrivError> {
@@ -187,12 +301,17 @@ fn overlay_target(entry: &str, overlay: &Path) -> Option<PathBuf> {
     Some(overlay.join(rel))
 }
 
-pub fn install_libndk(archive: &PinnedArchive, fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
+pub fn install_translation(t: Translator, fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
+    install_archive(t, t.archive(), fs, cmd)
+}
+
+fn install_archive(t: Translator, archive: &PinnedArchive, fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
     use std::os::unix::fs::PermissionsExt;
     let mut log = String::new();
-    let fail = |what: String| PrivError::StepFailed { step: tr!("verifica di libndk", "libndk check"), output: what };
+    let name = t.as_arg();
+    let fail = |what: String| PrivError::StepFailed { step: tr!("verifica di {name}", "{name} check"), output: what };
 
-    let work = fs.path(LIBNDK_WORK);
+    let work = fs.path(TRANSLATION_CACHE);
     std::fs::create_dir_all(&work)?;
     std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700))?;
     let zip_path = work.join(format!("{}.zip", archive.commit));
@@ -206,12 +325,17 @@ pub fn install_libndk(archive: &PinnedArchive, fs: &HostFs, cmd: &dyn CommandRun
         let want = archive.sha256;
         return Err(fail(tr!("archivio con hash {got}, atteso {want}", "archive hash {got}, expected {want}")));
     }
-    log.push_str(&tr!("libndk: hash corrispondente al valore fissato ({got})\n", "libndk: hash matches the pinned value ({got})\n"));
+    log.push_str(&tr!("{name}: hash corrispondente al valore fissato ({got})\n", "{name}: hash matches the pinned value ({got})\n"));
 
+    // Switching translator: the previous one's files go first, and its binfmt_misc handlers too,
+    // or the new ones could not register under the same names.
     let overlay = fs.path(OVERLAY_SYSTEM);
+    remove_listed_files(fs, &overlay);
+    unregister_binfmt(fs, &mut log)?;
+
     let file = std::fs::File::open(&zip_path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| fail(e.to_string()))?;
-    let mut installed: Vec<String> = Vec::new();
+    let mut installed: Vec<PathBuf> = Vec::new();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| fail(e.to_string()))?;
         let Some(target) = overlay_target(entry.name(), &overlay) else { continue };
@@ -220,30 +344,27 @@ pub fn install_libndk(archive: &PinnedArchive, fs: &HostFs, cmd: &dyn CommandRun
             std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
             continue;
         }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let mut data = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut data)?;
-        std::fs::write(&target, &data)?;
-        // Android expects root:shell 0755 for executables under bin/, root:root 0644 otherwise.
-        let in_bin = target.strip_prefix(&overlay).map(|p| p.starts_with("bin")).unwrap_or(false);
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(if in_bin { 0o755 } else { 0o644 }))?;
-        if fs.is_real() {
-            std::os::unix::fs::chown(&target, Some(0), Some(if in_bin { 2000 } else { 0 }))?;
-        }
-        installed.push(target.strip_prefix(fs.path("/")).map(|p| format!("/{}", p.display())).unwrap_or_default());
+        place_file(fs, &overlay, &mut installed, &target, &data)?;
     }
     if installed.is_empty() {
         return Err(fail(tr!("nessun file prebuilts/ nell'archivio", "no prebuilts/ files in the archive")));
     }
-    std::fs::write(fs.path(LIBNDK_MANIFEST), installed.join("\n") + "\n")?;
-    let n = installed.len();
+    for (rel, content) in t.overrides() {
+        place_file(fs, &overlay, &mut installed, &overlay.join(rel), content.as_bytes())?;
+    }
+    let listed: Vec<String> = installed.iter().map(|p| p.strip_prefix(fs.path("/")).map(|p| format!("/{}", p.display())).unwrap_or_default()).collect();
+    std::fs::write(fs.path(TRANSLATION_MANIFEST), listed.join("\n") + "\n")?;
+    let n = listed.len();
     log.push_str(&tr!("{n} file copiati in {OVERLAY_SYSTEM}\n", "{n} files copied into {OVERLAY_SYSTEM}\n"));
 
     let cfg_path = fs.path(WAYDROID_CFG);
     let mut ini = Ini::parse(&std::fs::read_to_string(&cfg_path)?);
-    for (k, v) in LIBNDK_PROPS {
+    for (k, _) in LIBNDK_PROPS.iter().chain(LIBHOUDINI_PROPS) {
+        ini.remove("properties", k);
+    }
+    for (k, v) in t.props() {
         ini.set("properties", k, v);
     }
     std::fs::write(&cfg_path, ini.render())?;
@@ -251,41 +372,67 @@ pub fn install_libndk(archive: &PinnedArchive, fs: &HostFs, cmd: &dyn CommandRun
     Ok(CmdOutput::ok(log))
 }
 
-pub fn remove_libndk(fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
-    let mut log = String::new();
-    let overlay = fs.path(OVERLAY_SYSTEM);
-    if let Some(list) = fs.read(LIBNDK_MANIFEST) {
-        let mut dirs = std::collections::BTreeSet::new();
-        for f in list.lines().filter(|l| !l.is_empty()) {
-            let p = fs.path(f);
-            // Only ever delete what this module put in the overlay.
-            if p.starts_with(&overlay) {
-                let _ = std::fs::remove_file(&p);
-                dirs.extend(p.ancestors().skip(1).take_while(|d| *d != overlay).map(Path::to_path_buf));
-            }
-        }
-        // Deepest first; remove_dir leaves directories that still hold other overlay files.
-        for d in dirs.iter().rev() {
-            let _ = std::fs::remove_dir(d);
-        }
-        let _ = std::fs::remove_file(fs.path(LIBNDK_MANIFEST));
+fn place_file(fs: &HostFs, overlay: &Path, installed: &mut Vec<PathBuf>, target: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    let cfg_path = fs.path(WAYDROID_CFG);
-    let mut ini = Ini::parse(&std::fs::read_to_string(&cfg_path)?);
-    for (k, _) in LIBNDK_PROPS {
-        ini.remove("properties", k);
+    std::fs::write(target, data)?;
+    // Android expects root:shell 0755 for executables under bin/, root:root 0644 otherwise.
+    let in_bin = target.strip_prefix(overlay).map(|p| p.starts_with("bin")).unwrap_or(false);
+    std::fs::set_permissions(target, std::fs::Permissions::from_mode(if in_bin { 0o755 } else { 0o644 }))?;
+    if fs.is_real() {
+        std::os::unix::fs::chown(target, Some(0), Some(if in_bin { 2000 } else { 0 }))?;
     }
-    std::fs::write(&cfg_path, ini.render())?;
-    regenerate_props(fs, cmd, &mut log)?;
-    // libndk's init script registers these in the host kernel at every Android boot; with the
-    // files gone nothing registers them again, so drop the ones still loaded.
-    for name in LIBNDK_BINFMT {
+    if !installed.iter().any(|p| p == target) {
+        installed.push(target.to_path_buf());
+    }
+    Ok(())
+}
+
+/// Deletes what the manifest lists (only inside the overlay) and the directories left empty.
+fn remove_listed_files(fs: &HostFs, overlay: &Path) {
+    let Some(list) = fs.read(TRANSLATION_MANIFEST) else { return };
+    let mut dirs = std::collections::BTreeSet::new();
+    for f in list.lines().filter(|l| !l.is_empty()) {
+        let p = fs.path(f);
+        if p.starts_with(overlay) {
+            let _ = std::fs::remove_file(&p);
+            dirs.extend(p.ancestors().skip(1).take_while(|d| *d != overlay).map(Path::to_path_buf));
+        }
+    }
+    // Deepest first; remove_dir leaves directories that still hold other overlay files.
+    for d in dirs.iter().rev() {
+        let _ = std::fs::remove_dir(d);
+    }
+    let _ = std::fs::remove_file(fs.path(TRANSLATION_MANIFEST));
+}
+
+/// Both translators' init scripts register these in the host kernel at every Android boot and
+/// nothing removes them; foreign handlers (qemu-user) are left alone.
+fn unregister_binfmt(fs: &HostFs, log: &mut String) -> Result<(), PrivError> {
+    for name in TRANSLATION_BINFMT {
         let entry = format!("{BINFMT_MISC}/{name}");
-        if fs.read(&entry).is_some_and(|s| s.contains("ndk_translation_program_runner")) {
+        if fs.read(&entry).is_some_and(|s| s.contains("ndk_translation_program_runner") || s.contains("/system/bin/houdini")) {
             std::fs::write(fs.path(&entry), "-1")?;
             log.push_str(&tr!("binfmt_misc: rimosso il gestore {name}\n", "binfmt_misc: removed the {name} handler\n"));
         }
     }
+    Ok(())
+}
+
+pub fn remove_translation(fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
+    let mut log = String::new();
+    remove_listed_files(fs, &fs.path(OVERLAY_SYSTEM));
+    let cfg_path = fs.path(WAYDROID_CFG);
+    let mut ini = Ini::parse(&std::fs::read_to_string(&cfg_path)?);
+    for (k, _) in LIBNDK_PROPS.iter().chain(LIBHOUDINI_PROPS) {
+        ini.remove("properties", k);
+    }
+    std::fs::write(&cfg_path, ini.render())?;
+    // Before the restart in regenerate_props; with the files gone nothing registers them again.
+    unregister_binfmt(fs, &mut log)?;
+    regenerate_props(fs, cmd, &mut log)?;
     Ok(CmdOutput::ok(log))
 }
 
@@ -346,21 +493,73 @@ mod tests {
         assert_eq!(overlay_target("repo-abc/prebuilts/", o), None);
     }
 
-    fn fake_archive(path: &Path) -> String {
+    fn zip_with(path: &Path, entries: &[(&str, &str)]) -> String {
         let f = std::fs::File::create(path).unwrap();
         let mut z = zip::ZipWriter::new(f);
         let opts = zip::write::SimpleFileOptions::default();
-        for (name, body) in [
-            ("repo-abc/README.md", "readme"),
-            ("repo-abc/prebuilts/lib64/libndk_translation.so", "\x7fELF lib"),
-            ("repo-abc/prebuilts/bin/arm64/linker64", "\x7fELF linker"),
-            ("repo-abc/prebuilts/etc/init/ndk_translation.rc", "on early-init"),
-        ] {
-            z.start_file(name, opts).unwrap();
+        for (name, body) in entries {
+            z.start_file(*name, opts).unwrap();
             z.write_all(body.as_bytes()).unwrap();
         }
         z.finish().unwrap();
         crate::nvidia_stack::sha256_file(path).unwrap()
+    }
+
+    fn fake_archive(path: &Path) -> String {
+        zip_with(
+            path,
+            &[
+                ("repo-abc/README.md", "readme"),
+                ("repo-abc/prebuilts/lib64/libndk_translation.so", "\x7fELF lib"),
+                ("repo-abc/prebuilts/bin/arm64/linker64", "\x7fELF linker"),
+                ("repo-abc/prebuilts/etc/init/ndk_translation.rc", "on early-init"),
+            ],
+        )
+    }
+
+    #[test]
+    fn switching_to_libhoudini_replaces_libndk() {
+        let root = tempfile::tempdir().unwrap();
+        let fs = HostFs::rooted(root.path());
+        std::fs::create_dir_all(fs.path("/var/lib/waydroid")).unwrap();
+        std::fs::create_dir_all(fs.path(TRANSLATION_CACHE)).unwrap();
+        std::fs::write(fs.path(WAYDROID_CFG), "[waydroid]\narch = x86_64\n\n[properties]\npersist.waydroid.multi_windows = true\n").unwrap();
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let ndk = PinnedArchive { url: "https://example.invalid/n.zip", commit: "abc", sha256: leak(fake_archive(&fs.path(format!("{TRANSLATION_CACHE}/abc.zip")))) };
+        let hou_sha = zip_with(
+            &fs.path(format!("{TRANSLATION_CACHE}/def.zip")),
+            &[
+                ("repo-def/prebuilts/lib64/libhoudini.so", "\x7fELF houdini"),
+                ("repo-def/prebuilts/bin/houdini64", "\x7fELF runner"),
+                ("repo-def/prebuilts/etc/init/houdini.rc", "copy /vendor/etc/binfmt_misc/arm_exe"),
+            ],
+        );
+        let hou = PinnedArchive { url: "https://example.invalid/h.zip", commit: "def", sha256: leak(hou_sha) };
+        let runner = FakeRunner::new()
+            .with_program("waydroid")
+            .respond("/usr/bin/waydroid upgrade -o", CmdOutput::ok(""))
+            .respond("systemctl is-active waydroid-container.service", CmdOutput::ok("inactive\n"));
+
+        install_archive(Translator::Libndk, &ndk, &fs, &runner).unwrap();
+        // What libndk's init script registered at the last Android boot.
+        std::fs::create_dir_all(fs.path(BINFMT_MISC)).unwrap();
+        let handler = fs.path(format!("{BINFMT_MISC}/arm64_exe"));
+        std::fs::write(&handler, "enabled\ninterpreter /system/bin/ndk_translation_program_runner_binfmt_misc_arm64\n").unwrap();
+
+        install_archive(Translator::Libhoudini, &hou, &fs, &runner).unwrap();
+        let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
+        assert_eq!(arm_translator(&fs, &cfg), Some(Translator::Libhoudini));
+        assert!(!fs.exists(format!("{OVERLAY_SYSTEM}/lib64/libndk_translation.so")));
+        assert!(!fs.exists(format!("{OVERLAY_SYSTEM}/bin/arm64")), "libndk's directories go too");
+        assert_eq!(std::fs::read_to_string(fs.path(format!("{OVERLAY_SYSTEM}/etc/init/houdini.rc"))).unwrap(), HOUDINI_RC);
+        assert!(cfg.contains("ro.dalvik.vm.native.bridge = libhoudini.so") && cfg.contains("ro.enable.native.bridge.exec64 = 1"));
+        assert!(!cfg.contains("ndk_translation") && cfg.contains("persist.waydroid.multi_windows = true"));
+        assert_eq!(std::fs::read_to_string(&handler).unwrap(), "-1", "the name must be free for houdini's handler");
+
+        remove_translation(&fs, &runner).unwrap();
+        let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
+        assert_eq!(arm_translator(&fs, &cfg), None);
+        assert!(!cfg.contains("native.bridge") && !fs.exists(format!("{OVERLAY_SYSTEM}/etc/init/houdini.rc")));
     }
 
     #[test]
@@ -369,17 +568,17 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let fs = HostFs::rooted(root.path());
         std::fs::create_dir_all(fs.path("/var/lib/waydroid")).unwrap();
-        std::fs::create_dir_all(fs.path(LIBNDK_WORK)).unwrap();
+        std::fs::create_dir_all(fs.path(TRANSLATION_CACHE)).unwrap();
         std::fs::write(fs.path(WAYDROID_CFG), "[waydroid]\narch = x86_64\n\n[properties]\npersist.waydroid.multi_windows = true\n").unwrap();
         let commit = "abc";
-        let sha = fake_archive(&fs.path(format!("{LIBNDK_WORK}/{commit}.zip")));
+        let sha = fake_archive(&fs.path(format!("{TRANSLATION_CACHE}/{commit}.zip")));
         let archive = PinnedArchive { url: "https://example.invalid/x.zip", commit: "abc", sha256: Box::leak(sha.into_boxed_str()) };
         let runner = FakeRunner::new()
             .with_program("waydroid")
             .respond("/usr/bin/waydroid upgrade -o", CmdOutput::ok(""))
             .respond("systemctl is-active waydroid-container.service", CmdOutput::ok("inactive\n"));
 
-        install_libndk(&archive, &fs, &runner).unwrap();
+        install_archive(Translator::Libndk, &archive, &fs, &runner).unwrap();
         let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
         assert!(arm_translation_installed(&fs, &cfg));
         assert!(cfg.contains("persist.waydroid.multi_windows = true"));
@@ -396,7 +595,7 @@ mod tests {
         let qemu = fs.path(format!("{BINFMT_MISC}/arm_exe"));
         std::fs::write(&qemu, "enabled\ninterpreter /usr/libexec/qemu-binfmt/arm-binfmt-P\n").unwrap();
 
-        let out = remove_libndk(&fs, &runner).unwrap();
+        let out = remove_translation(&fs, &runner).unwrap();
         let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
         assert!(!arm_translation_installed(&fs, &cfg));
         assert!(!cfg.contains("native.bridge"));
@@ -412,15 +611,15 @@ mod tests {
     fn tampered_libndk_archive_is_rejected() {
         let root = tempfile::tempdir().unwrap();
         let fs = HostFs::rooted(root.path());
-        std::fs::create_dir_all(fs.path(LIBNDK_WORK)).unwrap();
-        let zip_path = fs.path(format!("{LIBNDK_WORK}/abc.zip"));
+        std::fs::create_dir_all(fs.path(TRANSLATION_CACHE)).unwrap();
+        let zip_path = fs.path(format!("{TRANSLATION_CACHE}/abc.zip"));
         fake_archive(&zip_path);
         let archive = PinnedArchive { url: "https://example.invalid/x.zip", commit: "abc", sha256: "0000000000000000000000000000000000000000000000000000000000000000" };
         let runner = FakeRunner::new().respond(
             &format!("curl --fail --location --proto =https --proto-redir =https --retry 2 -sS -o {} https://example.invalid/x.zip", zip_path.display()),
             CmdOutput::ok(""),
         );
-        let err = install_libndk(&archive, &fs, &runner).unwrap_err();
+        let err = install_archive(Translator::Libndk, &archive, &fs, &runner).unwrap_err();
         assert!(err.to_string().contains("hash"));
         assert!(!zip_path.exists());
     }

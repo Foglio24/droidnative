@@ -13,7 +13,7 @@ use droidnative_core::nvidia_stack::NvidiaMode;
 use droidnative_core::privileged::{escalator_from_env, Escalator, GpuSelection, PrivilegedOp};
 use droidnative_core::report::{build_report, CompatibilityReport};
 use droidnative_core::runtime::waydroid::WaydroidRuntime;
-use droidnative_core::runtime::{AndroidApp, AndroidRuntime, GraphicsConfig, InstallOutcome, RuntimeStatus};
+use droidnative_core::runtime::{AndroidApp, AndroidRuntime, GraphicsConfig, InstallOutcome, RuntimeStatus, WindowMode};
 use droidnative_core::setup::{self, SetupStep};
 use serde::Serialize;
 
@@ -200,6 +200,30 @@ async fn launch_app(state: tauri::State<'_, AppState>, package: String) -> Resul
 }
 
 #[tauri::command]
+async fn fake_touch_list(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let rt = state.runtime.clone();
+    blocking("fake_touch_list", move || rt.fake_touch().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn set_fake_touch(state: tauri::State<'_, AppState>, package: String, enabled: bool) -> Result<Vec<String>, String> {
+    let rt = state.runtime.clone();
+    blocking("set_fake_touch", move || rt.set_fake_touch(&package, enabled).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn window_mode(state: tauri::State<'_, AppState>) -> Result<WindowMode, String> {
+    let rt = state.runtime.clone();
+    blocking("window_mode", move || rt.window_mode().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn set_window_mode(state: tauri::State<'_, AppState>, mode: WindowMode) -> Result<(), String> {
+    let rt = state.runtime.clone();
+    blocking("set_window_mode", move || rt.set_window_mode(mode).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
 async fn uninstall_app(state: tauri::State<'_, AppState>, package: String) -> Result<String, String> {
     let rt = state.runtime.clone();
     let esc = state.escalator.clone();
@@ -254,6 +278,10 @@ pub fn run() {
             install_apk,
             launch_app,
             uninstall_app,
+            fake_touch_list,
+            set_fake_touch,
+            window_mode,
+            set_window_mode,
             graphics_config,
             verify_gpu,
             read_logs,

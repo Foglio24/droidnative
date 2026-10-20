@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { mdiCheck, mdiContentCopy, mdiGoogle, mdiIdentifier, mdiOpenInNew, mdiPlay } from "@mdi/js";
+import { mdiCheck, mdiContentCopy, mdiGoogle, mdiIdentifier, mdiOpenInNew, mdiPlay, mdiSwapHorizontal } from "@mdi/js";
 import type { Shared } from "../App";
 import { api, errorText } from "../api";
 import { t, type Key } from "../i18n";
@@ -81,7 +81,7 @@ export function Setup(p: Shared) {
       {view && (
         <ol className="steps">
           {view.steps.map((s, i) => {
-            const runnable = s.action != null && (s.state === "pending" || s.state === "optional");
+            const runnable = s.action != null && (s.state === "pending" || s.state === "optional" || (s.state === "done" && s.alt_label != null));
             return (
               <li key={s.id} className={`step ${s.state}`}>
                 <div className="step-num">{s.state === "done" ? <Icon path={mdiCheck} size={22} /> : i + 1}</div>
@@ -103,8 +103,14 @@ export function Setup(p: Shared) {
                   )}
                 </div>
                 {runnable && (
-                  <Button kind={s.state === "pending" ? "filled" : "tonal"} icon={mdiPlay} busy={busy === s.id} disabled={busy !== null} onClick={() => setConfirm(s)}>
-                    {t("btn.run")}
+                  <Button
+                    kind={s.state === "pending" ? "filled" : s.state === "done" ? "outlined" : "tonal"}
+                    icon={s.state === "done" ? mdiSwapHorizontal : mdiPlay}
+                    busy={busy === s.id}
+                    disabled={busy !== null}
+                    onClick={() => setConfirm(s)}
+                  >
+                    {s.state === "done" && s.alt_label ? s.alt_label : t("btn.run")}
                   </Button>
                 )}
               </li>

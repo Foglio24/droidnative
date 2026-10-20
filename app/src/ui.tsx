@@ -116,9 +116,33 @@ export function Button({
   );
 }
 
-export function IconButton({ icon, label, onClick, danger, busy, disabled }: { icon: string; label: string; onClick: () => void; danger?: boolean; busy?: boolean; disabled?: boolean }) {
+export function IconButton({
+  icon,
+  label,
+  onClick,
+  danger,
+  busy,
+  disabled,
+  selected,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  busy?: boolean;
+  disabled?: boolean;
+  /** Makes it a toggle (Material 3 tonal icon button). */
+  selected?: boolean;
+}) {
   return (
-    <button className={`icon-btn ${danger ? "danger" : ""}`} onClick={onClick} aria-label={label} title={label} disabled={disabled || busy}>
+    <button
+      className={`icon-btn ${danger ? "danger" : ""} ${selected ? "selected" : ""}`}
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={selected}
+      title={label}
+      disabled={disabled || busy}
+    >
       {busy ? <span className="spinner" aria-hidden /> : <Icon path={icon} size={22} />}
     </button>
   );

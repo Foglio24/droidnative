@@ -10,6 +10,7 @@ import type {
   NvidiaMode,
   RuntimeStatus,
   SetupView,
+  WindowMode,
 } from "./types";
 
 export const api = {
@@ -30,6 +31,10 @@ export const api = {
   installApk: (path: string, expectedSha256: string) => invoke<InstallOutcome>("install_apk", { path, expectedSha256 }),
   launch: (pkg: string) => invoke<void>("launch_app", { package: pkg }),
   uninstall: (pkg: string) => invoke<string>("uninstall_app", { package: pkg }),
+  fakeTouch: () => invoke<string[]>("fake_touch_list"),
+  setFakeTouch: (pkg: string, enabled: boolean) => invoke<string[]>("set_fake_touch", { package: pkg, enabled }),
+  windowMode: () => invoke<WindowMode>("window_mode"),
+  setWindowMode: (mode: WindowMode) => invoke<void>("set_window_mode", { mode }),
   graphics: () => invoke<GraphicsConfig>("graphics_config"),
   verifyGpu: () => invoke<AccelVerdict>("verify_gpu"),
   googleDeviceId: () => invoke<string>("google_device_id"),

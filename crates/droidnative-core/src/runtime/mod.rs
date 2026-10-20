@@ -84,6 +84,19 @@ pub enum SessionState {
     Unknown,
 }
 
+/// How Android apps reach the desktop (`persist.waydroid.multi_windows`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    /// One window holding Android's whole display (Waydroid's default).
+    Single,
+    /// Every app in its own desktop window; Android runs in PC mode with freeform windows.
+    Multi,
+}
+
+/// Android's limit for a non-`ro.` property value (PROP_VALUE_MAX minus the terminator).
+pub const PROP_VALUE_LIMIT: usize = 91;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
     pub backend: String,
@@ -142,6 +155,13 @@ pub trait AndroidRuntime: Send + Sync {
     fn uninstall(&self, package: &str, escalator: &dyn Escalator) -> Result<String, RuntimeError>;
     fn launch(&self, package: &str) -> Result<(), RuntimeError>;
     fn get_prop(&self, key: &str) -> Result<Option<String>, RuntimeError>;
+    /// Packages (or `*` globs) whose mouse input Android delivers as touch (`persist.waydroid.fake_touch`).
+    fn fake_touch(&self) -> Result<Vec<String>, RuntimeError>;
+    /// Read by an app when it creates its windows: it applies the next time the app opens.
+    fn set_fake_touch(&self, package: &str, enabled: bool) -> Result<Vec<String>, RuntimeError>;
+    fn window_mode(&self) -> Result<WindowMode, RuntimeError>;
+    /// Restarts a running session: Android reads its PC features (freeform windows) at boot.
+    fn set_window_mode(&self, mode: WindowMode) -> Result<(), RuntimeError>;
     fn graphics_config(&self) -> Result<GraphicsConfig, RuntimeError>;
     /// Read the renderer SurfaceFlinger really uses (needs privileges).
     fn verify_acceleration(&self, escalator: &dyn Escalator) -> Result<AccelVerdict, RuntimeError>;

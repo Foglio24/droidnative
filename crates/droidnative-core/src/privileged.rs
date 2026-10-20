@@ -127,8 +127,8 @@ pub enum PrivilegedOp {
     NvidiaSetMode { mode: crate::nvidia_stack::NvidiaMode },
     /// `waydroid init -f -s <type>` (apps and data kept), then re-provision waydroid-nvidia.
     SwitchSystemImage { system_type: SystemType },
-    /// Install the pinned libndk ARM translation into the system overlay.
-    InstallArmTranslation,
+    /// Install a pinned ARM translator into the system overlay (replacing the other one).
+    InstallArmTranslation { translator: crate::extras::Translator },
     RemoveArmTranslation,
     /// Read the GSF Android ID needed to register the device with Google.
     GoogleDeviceId,
@@ -158,7 +158,7 @@ impl PrivilegedOp {
             Self::InstallNvidiaStack { tag, mode } => v(&["install-nvidia-stack", "--tag", tag, "--mode", mode.as_arg()]),
             Self::NvidiaSetMode { mode } => v(&["nvidia-mode", "--mode", mode.as_arg()]),
             Self::SwitchSystemImage { system_type } => v(&["switch-image", "--system-type", system_type.as_arg()]),
-            Self::InstallArmTranslation => v(&["install-arm-translation"]),
+            Self::InstallArmTranslation { translator } => v(&["install-arm-translation", "--translator", translator.as_arg()]),
             Self::RemoveArmTranslation => v(&["remove-arm-translation"]),
             Self::GoogleDeviceId => v(&["google-device-id"]),
             Self::RepinRenderNode { start_container: false } => v(&["repin-render-node"]),
@@ -214,14 +214,18 @@ impl PrivilegedOp {
                     "Switch to the {t} system image (LineageOS 20, official OTA channel, ~1 GB, SHA-256 checked by Waydroid). Apps and data are kept; with waydroid-nvidia the GPU mode is re-activated."
                 )
             }
-            Self::InstallArmTranslation => {
-                let commit = &crate::extras::LIBNDK_A13.commit[..12];
+            Self::InstallArmTranslation { translator } => {
+                let commit = &translator.archive().commit[..12];
+                let (name, vendor) = match translator {
+                    crate::extras::Translator::Libndk => ("libndk", "Google"),
+                    crate::extras::Translator::Libhoudini => ("libhoudini", "Intel"),
+                };
                 tr!(
-                    "Installare la traduzione ARM libndk di Google (pacchetto supremegamers, commit {commit}, SHA-256 fissato) nell'overlay di sistema di Waydroid e attivare il native bridge. libndk registra anche i gestori binfmt_misc per gli eseguibili ARM nel kernel.",
-                    "Install Google's libndk ARM translation (supremegamers package, commit {commit}, pinned SHA-256) into Waydroid's system overlay and enable the native bridge. libndk also registers binfmt_misc handlers for ARM executables in the kernel."
+                    "Installare la traduzione ARM {name} di {vendor} (pacchetto supremegamers, commit {commit}, SHA-256 fissato) nell'overlay di sistema di Waydroid, al posto dell'altro traduttore se presente, e attivare il native bridge. Il traduttore registra anche i gestori binfmt_misc per gli eseguibili ARM nel kernel.",
+                    "Install {vendor}'s {name} ARM translation (supremegamers package, commit {commit}, pinned SHA-256) into Waydroid's system overlay, replacing the other translator if present, and enable the native bridge. The translator also registers binfmt_misc handlers for ARM executables in the kernel."
                 )
             }
-            Self::RemoveArmTranslation => tr!("Rimuovere la traduzione ARM libndk", "Remove the libndk ARM translation"),
+            Self::RemoveArmTranslation => tr!("Rimuovere la traduzione ARM", "Remove the ARM translation"),
             Self::GoogleDeviceId => tr!("Leggere l'ID dispositivo Google (GSF Android ID)", "Read the Google device ID (GSF Android ID)"),
             Self::RepinRenderNode { .. } => tr!(
                 "Aggiornare il nodo della GPU NVIDIA in waydroid.cfg (cambiato dopo il riavvio), rigenerare la configurazione del container e avviarlo",
@@ -237,7 +241,7 @@ impl PrivilegedOp {
             Self::InstallNvidiaStack { .. } => Duration::from_secs(7200),
             Self::NvidiaSetMode { .. } => Duration::from_secs(1800),
             Self::SwitchSystemImage { .. } => Duration::from_secs(5400),
-            Self::InstallArmTranslation | Self::RemoveArmTranslation => Duration::from_secs(1200),
+            Self::InstallArmTranslation { .. } | Self::RemoveArmTranslation => Duration::from_secs(1200),
             Self::SelectGpu { .. } | Self::RepinRenderNode { .. } => Duration::from_secs(600),
             _ => Duration::from_secs(120),
         }
@@ -309,7 +313,7 @@ pub fn escalator_from_env(helper: PathBuf, cmd: Arc<dyn CommandRunner>) -> Box<d
 /// Validate a render node the way the root helper must: exact `/dev/dri/renderD<N>` form,
 /// existing, and not NVIDIA (Waydroid's Mesa path ignores NVIDIA nodes).
 pub fn validate_render_node(fs: &HostFs, node: &str) -> Result<(), PrivError> {
-    let n = node.strip_prefix("/dev/dri/renderD").ok_or_else(|| PrivError::Invalid(format!("nodo non valido: {node:?}")))?;
+    let n = node.strip_prefix("/dev/dri/renderD").ok_or_else(|| PrivError::Invalid(tr!("nodo non valido: {node:?}", "invalid node: {node:?}")))?;
     if n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
         return Err(PrivError::Invalid(tr!("nodo non valido: {node:?}", "invalid node: {node:?}")));
     }
@@ -423,8 +427,8 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         }
         PrivilegedOp::NvidiaSetMode { mode } => crate::nvidia_stack::set_mode(*mode, fs, cmd),
         PrivilegedOp::SwitchSystemImage { system_type } => crate::extras::switch_system_image(*system_type, fs, cmd),
-        PrivilegedOp::InstallArmTranslation => crate::extras::install_libndk(&crate::extras::LIBNDK_A13, fs, cmd),
-        PrivilegedOp::RemoveArmTranslation => crate::extras::remove_libndk(fs, cmd),
+        PrivilegedOp::InstallArmTranslation { translator } => crate::extras::install_translation(*translator, fs, cmd),
+        PrivilegedOp::RemoveArmTranslation => crate::extras::remove_translation(fs, cmd),
         PrivilegedOp::GoogleDeviceId => crate::extras::google_device_id(cmd),
         PrivilegedOp::RepinRenderNode { start_container } => crate::nvidia_stack::repin_render_node(*start_container, fs, cmd),
         PrivilegedOp::AllowContainerNetwork => {

@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { mdiDeleteOutline, mdiFolderOpenOutline, mdiMagnify, mdiOpenInNew, mdiPackageVariantPlus, mdiPlay, mdiRefresh, mdiRocketLaunchOutline } from "@mdi/js";
+import {
+  mdiDeleteOutline,
+  mdiDockWindow,
+  mdiFolderOpenOutline,
+  mdiGestureTap,
+  mdiMagnify,
+  mdiOpenInNew,
+  mdiPackageVariantPlus,
+  mdiPlay,
+  mdiRefresh,
+  mdiRocketLaunchOutline,
+  mdiWindowRestore,
+} from "@mdi/js";
 import type { Shared } from "../App";
 import { api, errorText } from "../api";
 import { formatBytes, t, type Key } from "../i18n";
-import type { AndroidApp, ApkInfo } from "../types";
+import type { AndroidApp, ApkInfo, WindowMode } from "../types";
 import { Button, Card, Chip, Dialog, Icon, IconButton, KeyValue, Loading, PageHead, useAction } from "../ui";
 
 const ABI_TONE: Record<ApkInfo["abi_compat"], string> = {
@@ -15,6 +27,50 @@ const ABI_TONE: Record<ApkInfo["abi_compat"], string> = {
   translated: "info",
   incompatible: "fail",
 };
+
+function WindowModeCard(p: Shared) {
+  const { busy, run } = useAction(p.setNotice);
+  const [mode, setMode] = useState<WindowMode | null>(null);
+  const [asking, setAsking] = useState<WindowMode | null>(null);
+
+  useEffect(() => {
+    api.windowMode().then(setMode, () => setMode(null));
+  }, []);
+
+  const change = async (m: WindowMode) => {
+    setAsking(null);
+    const ok = await run("windows", async () => (await api.setWindowMode(m), true), () => t("windows.changed"));
+    if (ok) {
+      setMode(m);
+      await p.refreshStatus();
+    }
+  };
+
+  const option = (m: WindowMode, icon: string, label: string) => (
+    <button aria-pressed={mode === m} disabled={busy !== null || mode === null} onClick={() => mode !== m && setAsking(m)}>
+      <Icon path={icon} size={20} />
+      {label}
+    </button>
+  );
+
+  return (
+    <Card title={t("windows.title")} icon={mdiWindowRestore}>
+      <div className="segmented">
+        {option("single", mdiWindowRestore, t("windows.single"))}
+        {option("multi", mdiDockWindow, t("windows.multi"))}
+      </div>
+      <p className="small muted" style={{ marginBottom: 0 }}>
+        {mode === null ? t("windows.unknown") : t(mode === "multi" ? "windows.multi.desc" : "windows.single.desc")}
+      </p>
+      {busy === "windows" && <div className="progress" />}
+      {asking && (
+        <Dialog title={t("windows.confirm.title")} confirmLabel={t("common.continue")} onCancel={() => setAsking(null)} onConfirm={() => void change(asking)}>
+          <p>{t("windows.confirm.body")}</p>
+        </Dialog>
+      )}
+    </Card>
+  );
+}
 
 function AppAvatar({ app }: { app: AndroidApp }) {
   const [broken, setBroken] = useState(false);
@@ -31,6 +87,7 @@ export function Apps(p: Shared) {
   const [filter, setFilter] = useState("");
   const [apk, setApk] = useState<ApkInfo | null>(null);
   const [removing, setRemoving] = useState<AndroidApp | null>(null);
+  const [touch, setTouch] = useState<string[]>([]);
   const running = p.status?.session === "running" || p.status?.session === "frozen";
   const ready = p.report!.host.waydroid.initialized;
 
@@ -38,6 +95,7 @@ export function Apps(p: Shared) {
     try {
       setApps(await api.apps());
       setListError(null);
+      setTouch(await api.fakeTouch().catch(() => []));
     } catch (e) {
       setApps(null);
       setListError(errorText(e));
@@ -147,6 +205,8 @@ export function Apps(p: Shared) {
         </Card>
       )}
 
+      <WindowModeCard {...p} />
+
       {!apk && (
         <section className="card outlined">
           <div className="row">
@@ -184,6 +244,18 @@ export function Apps(p: Shared) {
                   <Button kind="tonal" icon={mdiOpenInNew} busy={busy === `launch:${a.package}`} onClick={() => run(`launch:${a.package}`, () => api.launch(a.package))}>
                     {t("btn.launch")}
                   </Button>
+                  <IconButton
+                    icon={mdiGestureTap}
+                    label={t("apps.touch")}
+                    selected={touch.includes(a.package)}
+                    busy={busy === `touch:${a.package}`}
+                    onClick={() => {
+                      const on = !touch.includes(a.package);
+                      void run(`touch:${a.package}`, () => api.setFakeTouch(a.package, on), () => t(on ? "apps.touch.on" : "apps.touch.off", { name: a.name })).then(
+                        (list) => list && setTouch(list),
+                      );
+                    }}
+                  />
                   <IconButton icon={mdiDeleteOutline} label={t("btn.uninstall")} danger onClick={() => setRemoving(a)} busy={busy === `remove:${a.package}`} />
                 </div>
               </li>

@@ -398,11 +398,12 @@ fn runtime_checks(r: &HostReport) -> Vec<Check> {
             .remedy(tr!("Installazione guidata → «Servizi Google (Play Store)»", "Guided setup → “Google services (Play Store)”")),
         });
         let arm = tr!("Traduzione ARM", "ARM translation");
-        c.push(if w.arm_translation {
-            Check::pass("arm_translation", &arm, tr!("libndk attiva: app con solo codice ARM supportate", "libndk active: ARM-only apps supported"))
+        c.push(if let Some(t) = w.arm_translator {
+            let name = t.as_arg();
+            Check::pass("arm_translation", &arm, tr!("{name} attiva: app con solo codice ARM supportate", "{name} active: ARM-only apps supported"))
         } else {
             Check::info("arm_translation", &arm, tr!("assente: le app con solo codice ARM non partono", "missing: ARM-only apps won't start"))
-                .remedy(tr!("Installazione guidata → «Traduzione ARM (libndk)»", "Guided setup → “ARM translation (libndk)”"))
+                .remedy(tr!("Installazione guidata → «Traduzione ARM»", "Guided setup → “ARM translation”"))
         });
     }
     let pk = tr!("Elevazione privilegi (polkit)", "Privilege elevation (polkit)");

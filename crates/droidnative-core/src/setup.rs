@@ -28,6 +28,8 @@ pub struct SetupStep {
     pub op: Option<PrivilegedOp>,
     /// Human readable description of `op`, shown before asking for confirmation.
     pub action: Option<String>,
+    /// On a completed step, `op` is an alternative (another translator) and this its button text.
+    pub alt_label: Option<String>,
 }
 
 impl SetupStep {
@@ -56,6 +58,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
             state: StepState::Done,
             op: None,
             action: None,
+        alt_label: None,
         },
         (false, Some(s)) => SetupStep {
             id: "install_waydroid",
@@ -67,6 +70,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
             state: StepState::Pending,
             op: Some(PrivilegedOp::InstallWaydroid { suite: s.clone() }),
             action: None,
+        alt_label: None,
         },
         (false, None) => SetupStep {
             id: "install_waydroid",
@@ -78,6 +82,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
             state: StepState::Blocked,
             op: None,
             action: None,
+        alt_label: None,
         },
     });
 
@@ -102,6 +107,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         },
         op: (!w.initialized && w.installed).then_some(PrivilegedOp::InitWaydroid { system_type: SystemType::Vanilla }),
         action: None,
+        alt_label: None,
     });
 
     let service_active = w.container_service.is_active();
@@ -132,6 +138,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
             None => (!service_active && w.initialized).then_some(PrivilegedOp::EnableContainerService),
         },
         action: None,
+        alt_label: None,
     });
 
     let blocked_by_fw = host.firewall.may_block_container();
@@ -153,6 +160,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         },
         op: (w.dhcp_lease.is_none() && blocked_by_fw && w.installed).then_some(PrivilegedOp::AllowContainerNetwork),
         action: None,
+        alt_label: None,
     });
 
     let rec = gpu.assessments.iter().find(|a| a.descriptor.kind == gpu.recommended);
@@ -174,6 +182,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
                 },
                 op: (!done && w.initialized).then(|| node.map(|n| PrivilegedOp::SelectGpu { selection: GpuSelection::RenderNode(n) })).flatten(),
                 action: None,
+        alt_label: None,
             }
         }
         (kind @ (GpuBackendKind::NvidiaAccelerated | GpuBackendKind::NvidiaExperimental), Some(a)) => {
@@ -212,7 +221,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
                 }
             };
             let name = &a.descriptor.name;
-            SetupStep { id: "gpu_backend", title: tr!("Configurare il backend GPU {name}", "Set up the {name} GPU backend"), detail, state, op, action: None }
+            SetupStep { id: "gpu_backend", title: tr!("Configurare il backend GPU {name}", "Set up the {name} GPU backend"), detail, state, op, action: None, alt_label: None }
         }
         _ => SetupStep {
             id: "gpu_backend",
@@ -221,6 +230,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
             state: StepState::Done,
             op: None,
             action: None,
+        alt_label: None,
         },
     };
     steps.push(gpu_step);
@@ -249,28 +259,41 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         },
         op: (!gapps && w.initialized).then_some(PrivilegedOp::SwitchSystemImage { system_type: SystemType::Gapps }),
         action: None,
+        alt_label: None,
     });
 
-    steps.push(SetupStep {
-        id: "arm_translation",
-        title: tr!("Traduzione ARM (libndk)", "ARM translation (libndk)"),
-        detail: if w.arm_translation {
-            tr!("attiva: le app con solo codice ARM vengono tradotte", "active: ARM-only apps are translated")
-        } else {
-            tr!(
-                "permette di usare app e giochi con solo codice ARM; libndk è indicata per le CPU AMD",
-                "lets you run ARM-only apps and games; libndk is the right choice for AMD CPUs"
-            )
-        },
-        state: if w.arm_translation {
-            StepState::Done
-        } else if w.initialized {
-            StepState::Optional
-        } else {
-            StepState::Blocked
-        },
-        op: (!w.arm_translation && w.initialized).then_some(PrivilegedOp::InstallArmTranslation),
-        action: None,
+    let recommended = crate::extras::Translator::recommended(host.cpu.vendor.as_deref());
+    steps.push(match w.arm_translator.filter(|_| w.initialized) {
+        Some(t) => {
+            let (name, other) = (t.as_arg(), t.other().as_arg());
+            SetupStep {
+                id: "arm_translation",
+                title: tr!("Traduzione ARM", "ARM translation"),
+                detail: tr!(
+                    "attiva con {name}: le app con solo codice ARM vengono tradotte. Se un'app ARM si chiude all'avvio, prova {other}: alcune funzionano solo con uno dei due",
+                    "active with {name}: ARM-only apps are translated. If an ARM app closes on start, try {other}: some work only with one of the two"
+                ),
+                state: StepState::Done,
+                op: Some(PrivilegedOp::InstallArmTranslation { translator: t.other() }),
+                action: None,
+                alt_label: Some(tr!("Usa {other}", "Use {other}")),
+            }
+        }
+        None => {
+            let name = recommended.as_arg();
+            SetupStep {
+                id: "arm_translation",
+                title: tr!("Traduzione ARM", "ARM translation"),
+                detail: tr!(
+                    "permette di usare app e giochi con solo codice ARM; per questa CPU è indicato {name}",
+                    "lets you run ARM-only apps and games; {name} is the right choice for this CPU"
+                ),
+                state: if w.initialized { StepState::Optional } else { StepState::Blocked },
+                op: w.initialized.then_some(PrivilegedOp::InstallArmTranslation { translator: recommended }),
+                action: None,
+                alt_label: None,
+            }
+        }
     });
 
     let have_diag = host.gpu.opengl.is_some() && host.gpu.vulkan.vulkaninfo_available;
@@ -284,6 +307,7 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         state: if have_diag { StepState::Done } else { StepState::Optional },
         op: (!have_diag).then_some(PrivilegedOp::InstallDiagnostics),
         action: None,
+        alt_label: None,
     });
     steps.into_iter().map(SetupStep::with_action).collect()
 }

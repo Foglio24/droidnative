@@ -12,11 +12,12 @@ use droidnative_core::gpu::assess_backends;
 use droidnative_core::host::probe_local;
 use droidnative_core::i18n::{lang, Lang};
 use droidnative_core::tr;
+use droidnative_core::extras::Translator;
 use droidnative_core::nvidia_stack::NvidiaMode;
 use droidnative_core::privileged::{escalator_from_env, execute, Escalator, GpuSelection, PrivilegedOp, SystemType};
 use droidnative_core::report::build_report;
 use droidnative_core::runtime::waydroid::WaydroidRuntime;
-use droidnative_core::runtime::AndroidRuntime;
+use droidnative_core::runtime::{AndroidRuntime, WindowMode};
 use droidnative_core::setup;
 
 #[derive(Parser)]
@@ -93,16 +94,22 @@ enum Command {
     },
     /// Show the Google device ID to register at google.com/android/uncertified (needs authentication).
     GoogleId,
+    /// Show or change how apps reach the desktop: `single` (one Android window) or `multi`
+    /// (every app in its own window); changing it restarts Android.
+    Windows {
+        #[arg(value_enum)]
+        mode: Option<WindowModeArg>,
+    },
     /// Switch the Android system image: GAPPS (Google Play) or VANILLA; apps and data are kept
     /// (needs authentication).
     SystemImage {
         #[arg(value_enum)]
         system_type: SystemTypeArg,
     },
-    /// Install or remove the libndk ARM translation (needs authentication).
+    /// Install, switch or remove the ARM translation (needs authentication).
     ArmTranslation {
         #[command(subcommand)]
-        action: ToggleAction,
+        action: ArmTranslationAction,
     },
     /// Last lines of the runtime logs.
     Logs {
@@ -128,9 +135,13 @@ enum SessionAction {
 }
 
 #[derive(Subcommand)]
-enum ToggleAction {
-    /// Download the pinned archive, verify it and activate it.
-    Install,
+enum ArmTranslationAction {
+    /// Download the pinned translator, verify it and activate it in place of the other one.
+    Install {
+        /// libndk or libhoudini (default: the one recommended for this CPU).
+        #[arg(long, value_parser = parse_translator)]
+        translator: Option<Translator>,
+    },
     /// Remove its files, properties and binfmt_misc handlers.
     Remove,
 }
@@ -150,6 +161,25 @@ enum AppAction {
     Remove {
         package: String,
     },
+    /// Deliver mouse clicks to an app as touch (for games that ignore the mouse); applies the
+    /// next time the app opens. Without arguments, list the apps that have it.
+    Touch {
+        package: Option<String>,
+        #[arg(value_enum, requires = "package")]
+        state: Option<OnOff>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum WindowModeArg {
+    Single,
+    Multi,
 }
 
 #[derive(Subcommand)]
@@ -187,7 +217,10 @@ enum PrivCommand {
         #[arg(long, value_enum)]
         system_type: SystemTypeArg,
     },
-    InstallArmTranslation,
+    InstallArmTranslation {
+        #[arg(long, value_parser = parse_translator, default_value = "libndk")]
+        translator: Translator,
+    },
     RemoveArmTranslation,
     GoogleDeviceId,
     /// Runs as root from droidnative-render-node.service before every container start.
@@ -195,6 +228,10 @@ enum PrivCommand {
         #[arg(long)]
         start: bool,
     },
+}
+
+fn parse_translator(s: &str) -> Result<Translator, String> {
+    Translator::from_arg(s).ok_or_else(|| tr!("traduttore sconosciuto {s:?}: usa libndk o libhoudini", "unknown translator {s:?}: use libndk or libhoudini"))
 }
 
 fn parse_mode(s: &str) -> Result<NvidiaMode, String> {
@@ -252,7 +289,7 @@ impl PrivCommand {
             Self::InstallNvidiaStack { tag, mode } => PrivilegedOp::InstallNvidiaStack { tag, mode },
             Self::NvidiaMode { mode } => PrivilegedOp::NvidiaSetMode { mode },
             Self::SwitchImage { system_type } => PrivilegedOp::SwitchSystemImage { system_type: system_type.into() },
-            Self::InstallArmTranslation => PrivilegedOp::InstallArmTranslation,
+            Self::InstallArmTranslation { translator } => PrivilegedOp::InstallArmTranslation { translator },
             Self::RemoveArmTranslation => PrivilegedOp::RemoveArmTranslation,
             Self::GoogleDeviceId => PrivilegedOp::GoogleDeviceId,
             Self::RepinRenderNode { start } => PrivilegedOp::RepinRenderNode { start_container: start },
@@ -444,6 +481,23 @@ fn run(cli: Cli) -> Result<(), String> {
                     );
                 }
                 AppAction::Launch { package } => rt.launch(&package).map_err(|x| e(&x))?,
+                AppAction::Touch { package: None, .. } => {
+                    for p in rt.fake_touch().map_err(|x| e(&x))? {
+                        println!("{p}");
+                    }
+                }
+                AppAction::Touch { package: Some(package), state } => {
+                    let on = !matches!(state, Some(OnOff::Off));
+                    rt.set_fake_touch(&package, on).map_err(|x| e(&x))?;
+                    println!(
+                        "{}",
+                        if on {
+                            tr!("{package}: mouse come tocco attivo; vale dalla prossima apertura dell'app", "{package}: mouse as touch on; applies the next time the app opens")
+                        } else {
+                            tr!("{package}: mouse come tocco disattivato; vale dalla prossima apertura dell'app", "{package}: mouse as touch off; applies the next time the app opens")
+                        }
+                    );
+                }
                 AppAction::Remove { package } => {
                     let method = rt.uninstall(&package, escalator().as_ref()).map_err(|x| e(&x))?;
                     println!("{}", tr!("{package} rimosso e verificato ({method})", "{package} removed and verified ({method})"));
@@ -483,10 +537,29 @@ fn run(cli: Cli) -> Result<(), String> {
                 )
             );
         }
+        Command::Windows { mode } => {
+            let rt = WaydroidRuntime::local();
+            if let Some(m) = mode {
+                let m = match m {
+                    WindowModeArg::Single => WindowMode::Single,
+                    WindowModeArg::Multi => WindowMode::Multi,
+                };
+                rt.set_window_mode(m).map_err(|x| e(&x))?;
+            }
+            println!(
+                "{}",
+                match rt.window_mode().map_err(|x| e(&x))? {
+                    WindowMode::Single => tr!("single: Android in un'unica finestra", "single: Android in one window"),
+                    WindowMode::Multi => tr!("multi: ogni app nella sua finestra", "multi: every app in its own window"),
+                }
+            );
+        }
         Command::SystemImage { system_type } => run_op(&PrivilegedOp::SwitchSystemImage { system_type: system_type.into() })?,
         Command::ArmTranslation { action } => run_op(&match action {
-            ToggleAction::Install => PrivilegedOp::InstallArmTranslation,
-            ToggleAction::Remove => PrivilegedOp::RemoveArmTranslation,
+            ArmTranslationAction::Install { translator } => PrivilegedOp::InstallArmTranslation {
+                translator: translator.unwrap_or_else(|| Translator::recommended(probe_local().cpu.vendor.as_deref())),
+            },
+            ArmTranslationAction::Remove => PrivilegedOp::RemoveArmTranslation,
         })?,
         Command::Logs { lines } => print!("{}", WaydroidRuntime::local().log_tail(lines).map_err(|x| e(&x))?),
         Command::Priv { lang: requested, op } => {
@@ -520,8 +593,9 @@ const IT_ABOUT: &[(&str, &str)] = &[
     ("app", "Gestione delle applicazioni Android."),
     ("verify-gpu", "Verifica il renderer reale usato da Android (richiede autenticazione)."),
     ("google-id", "Mostra l'ID dispositivo Google da registrare su google.com/android/uncertified (richiede autenticazione)."),
+    ("windows", "Mostra o cambia come le app compaiono sul desktop: `single` (un'unica finestra Android) o `multi` (una finestra per app); il cambio riavvia Android."),
     ("system-image", "Cambia l'immagine di sistema Android: GAPPS (Google Play) o VANILLA; app e dati restano (richiede autenticazione)."),
-    ("arm-translation", "Installa o rimuove la traduzione ARM libndk (richiede autenticazione)."),
+    ("arm-translation", "Installa, cambia o rimuove la traduzione ARM (richiede autenticazione)."),
     ("logs", "Ultime righe dei log del runtime."),
 ];
 

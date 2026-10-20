@@ -1,117 +1,138 @@
 # DroidNative
 
-**App Android reali su Linux Debian/Ubuntu, in un container invece che in un emulatore,
-con accelerazione GPU verificata sul renderer reale.**
+**Real Android apps on Debian/Ubuntu Linux, in a container instead of an emulator, with GPU
+acceleration verified against the renderer Android actually uses — never just assumed.**
 
-*Real Android apps on Debian/Ubuntu Linux in a container (Waydroid), with GPU acceleration
-that is verified against the renderer Android actually uses — never just assumed.*
+![Overview: Android running with verified NVIDIA acceleration](docs/screenshots/overview.png)
 
-![Panoramica: Android attivo con accelerazione NVIDIA verificata](docs/screenshots/panoramica.png)
+DroidNative is a desktop application (Tauri 2 + React, Rust backend) that:
 
-DroidNative è un'applicazione desktop (Tauri 2 + React, backend Rust) che:
-
-- analizza il computer (distribuzione, kernel, binder, cgroups, GPU, driver, sessione, firewall)
-  e produce un report di compatibilità;
-- installa e configura [Waydroid](https://github.com/waydroid/waydroid) con un percorso guidato,
-  chiedendo la password di amministratore solo per operazioni di un elenco chiuso;
-- sceglie e attiva il backend GPU adatto, comprese le GPU NVIDIA tramite
+- analyzes the computer (distribution, kernel, binder, cgroups, GPU, drivers, session,
+  firewall) and produces a compatibility report;
+- installs and configures [Waydroid](https://github.com/waydroid/waydroid) through a guided
+  setup, asking for the administrator password only for operations from a closed list;
+- picks and activates the right GPU backend, NVIDIA GPUs included through
   [waydroid-nvidia](https://github.com/Shiro836/waydroid-nvidia);
-- **verifica** l'accelerazione leggendo il renderer di SurfaceFlinger e controlla che le
-  finestre Android arrivino davvero sul desktop;
-- installa, avvia e rimuove gli APK, analizzandoli prima (manifest, ABI, permessi, SHA-256)
-  e confermando l'installazione solo quando Android l'ha completata;
-- passa all'immagine Android con **Google Play** (Play Store e Google Play Services)
-  conservando app e dati, e guida la registrazione del dispositivo con Google;
-- installa la **traduzione ARM** (libndk), così funzionano anche le app e i giochi
-  distribuiti solo per processori ARM.
+- **verifies** acceleration by reading SurfaceFlinger's renderer and checks that Android's
+  windows really reach the desktop;
+- installs, launches and removes APKs, analyzing them first (manifest, ABIs, permissions,
+  SHA-256) and confirming an install only once Android has completed it;
+- switches to the Android image with **Google Play** (Play Store and Google Play Services)
+  keeping apps and data, and guides the device registration with Google;
+- installs **ARM translation** (libndk or libhoudini), so apps and games shipped only for ARM
+  processors run too;
+- lets each app get **its own resizable desktop window**, and turns mouse clicks into
+  **touch** for the games that ignore the mouse.
 
-Interfaccia in stile Material 3 (tema chiaro e scuro di sistema). Lingua: italiano se la
-sessione è in italiano (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), inglese in tutti gli
-altri casi — vale per l'app, la CLI e i messaggi dell'helper privilegiato.
+Material 3 interface (system light and dark theme). Language: Italian when the session is in
+Italian (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), English in every other case — for the
+app, the CLI and the privileged helper's messages alike.
 
-## Installazione
+## Install
 
-Requisiti: x86_64, Ubuntu 24.04+ o Debian 12+ (e derivate: Mint, Pop!_OS, Zorin, Kali,
-KDE Neon…), sessione Wayland, kernel con binder (i kernel delle distribuzioni lo includono).
+Requirements: x86_64, Ubuntu 24.04+ or Debian 12+ (and derivatives: Mint, Pop!_OS, Zorin,
+Kali, KDE Neon…), a Wayland session, a kernel with binder (distribution kernels include it).
 
-1. Scarica `droidnative_<versione>_amd64.deb` dalle
-   [Release](https://github.com/Foglio24/droidnative/releases/latest).
-2. (Facoltativo) verifica il pacchetto:
+1. Download `droidnative_<version>_amd64.deb` from the
+   [Releases](https://github.com/Foglio24/droidnative/releases/latest).
+2. (Optional) verify the package:
 
    ```bash
    sha256sum -c SHA256SUMS --ignore-missing
    ```
 
    ```bash
-   gh attestation verify droidnative_0.3.1_amd64.deb --repo Foglio24/droidnative
+   gh attestation verify droidnative_0.4.0_amd64.deb --repo Foglio24/droidnative
    ```
 
-3. Installa:
+3. Install it, from a terminal in the folder where you downloaded the file:
 
    ```bash
-   sudo apt install ./droidnative_0.3.1_amd64.deb
+   sudo apt install ./droidnative_0.4.0_amd64.deb
    ```
 
-   (il comando va lanciato nella cartella in cui hai scaricato il file)
-4. Apri **DroidNative** dal menu delle applicazioni e segui **Installazione**.
+4. Open **DroidNative** from the applications menu and follow **Setup**.
 
-### Installare un'app Android
+The package installs `/usr/bin/droidnative-app` (interface), `/usr/bin/droidnative` (CLI and
+privileged helper), the polkit action `io.droidnative.priv` and
+`droidnative-render-node.service` (see [GPU backends](#gpu-backends)). To remove it:
+`sudo apt remove droidnative` (Waydroid, images and Android data stay).
 
-Apri **App Android**, premi **Avvia Android** e poi **Installa APK**: DroidNative analizza il
-file, ti mostra nome, versione, permessi e compatibilità con la CPU e, dopo la conferma, lo
-installa e attende che Android completi l'installazione. L'app compare nell'elenco e nel
-menu delle applicazioni del desktop. Da terminale: `droidnative app install file.apk`.
+### Installing an Android app
 
-### Google Play e app ARM
+Open **Android apps**, press **Start Android** and then **Install APK**: DroidNative analyzes
+the file, shows its name, version, permissions and CPU compatibility and, once you confirm,
+installs it and waits for Android to finish. The app appears in the list and in the desktop's
+applications menu. From a terminal: `droidnative app install file.apk`.
 
-Due passi facoltativi in **Installazione**:
+### Windows and mouse
 
-- **Servizi Google (Play Store)** scarica l'immagine GAPPS ufficiale di Waydroid
-  (LineageOS con Play Store e Google Play Services) e la attiva; app e dati restano e,
-  con waydroid-nvidia, la modalità GPU viene riattivata da sola. Google blocca il Play
-  Store sui dispositivi non certificati: apri il Play Store una volta, premi **Mostra ID**
-  nella scheda «Registra il dispositivo con Google», registra l'ID su
-  [google.com/android/uncertified](https://www.google.com/android/uncertified) con il tuo
-  account e dopo qualche minuto riavvia Android. Per tornare all'immagine senza Google:
+- **Windows** (on the Android apps page): *One window* keeps Android in a single desktop
+  window with the apps inside it; *A window per app* gives every app its own desktop window
+  (Android's PC mode with freeform windows), resizable by dragging its edges. Dragging a
+  window by Android's own title bar can stutter, because Android moves it inside its screen
+  while the desktop places the window: hold the Super key and drag to let the desktop move it.
+  Changing the mode restarts Android. From a terminal: `droidnative windows single|multi`.
+- **Mouse as touch** (the hand icon next to each app): many games, Unity ones in particular,
+  react only to touch and ignore mouse clicks. With this on, Android delivers the app's clicks
+  and drags as touches. It applies the next time the app opens; Android limits the list to 91
+  characters. From a terminal: `droidnative app touch <package> on|off`.
+
+### Google Play and ARM apps
+
+Two optional steps in **Setup**:
+
+- **Google services (Play Store)** downloads Waydroid's official GAPPS image (LineageOS with
+  Play Store and Google Play Services) and activates it; apps and data stay and, with
+  waydroid-nvidia, the GPU mode is re-activated by itself. Google blocks the Play Store on
+  uncertified devices: open the Play Store once, press **Show ID** in the “Register the
+  device with Google” card, register the ID at
+  [google.com/android/uncertified](https://www.google.com/android/uncertified) with your
+  account and restart Android after a few minutes. Back to the image without Google:
   `droidnative system-image vanilla`.
-- **Traduzione ARM (libndk)** installa il traduttore ARM→x86 di Google nell'overlay di
-  sistema di Waydroid: Android dichiara le ABI `arm64-v8a` e `armeabi-v7a`, e gli APK con
-  solo codice ARM vengono indicati come «tradotti». libndk è un binario proprietario di
-  Google, scaricato da un archivio di terze parti
-  ([supremegamers](https://github.com/supremegamers/vendor_google_proprietary_ndk_translation-prebuilt))
-  fissato a un commit e verificato con SHA-256. All'avvio di Android registra nel kernel
-  dell'host quattro gestori `binfmt_misc` (`arm_exe`, `arm_dyn`, `arm64_exe`, `arm64_dyn`)
-  che, finché è installato, hanno la precedenza su quelli di `qemu-user-static` per gli
-  eseguibili ARM lanciati sull'host. `droidnative arm-translation remove` rimuove file,
-  proprietà e gestori.
+- **ARM translation** installs an ARM→x86 translator into Waydroid's system overlay: Android
+  then declares the `arm64-v8a` and `armeabi-v7a` ABIs and ARM-only APKs are marked as
+  “translated”. Two translators are available, and some apps run with only one of them:
+  **libndk** (Google, the default on AMD CPUs) and **libhoudini** (Intel, the default on Intel
+  CPUs). When an ARM app closes right after starting, switch with the **Use libhoudini** /
+  **Use libndk** button on the same step, or `droidnative arm-translation install --translator
+  libhoudini`. Age of Empires Mobile, for instance, aborts inside libndk and runs with
+  libhoudini.
 
-Le app che richiedono Play Integrity forte (molte app bancarie, alcune app con DRM o
-anti-cheat) possono rifiutarsi di funzionare anche con il dispositivo registrato.
+  Both are proprietary binaries that DroidNative does not ship: it downloads them, only when
+  you choose the step, from third-party archives
+  ([libndk](https://github.com/supremegamers/vendor_google_proprietary_ndk_translation-prebuilt),
+  [libhoudini](https://github.com/supremegamers/vendor_intel_proprietary_houdini)) pinned to a
+  commit and checked with SHA-256 — the same archives casualsnek/waydroid_script uses. This
+  libhoudini build states at startup that it is licensed for Google Play Games on Windows
+  under a commercial agreement; using it elsewhere is your call. At every Android boot the
+  translator registers four `binfmt_misc` handlers in the host kernel (`arm_exe`, `arm_dyn`,
+  `arm64_exe`, `arm64_dyn`) which, while installed, take precedence over `qemu-user-static`'s
+  for ARM executables started on the host. `droidnative arm-translation remove` removes files,
+  properties and handlers.
 
-Il pacchetto installa `/usr/bin/droidnative-app` (interfaccia), `/usr/bin/droidnative`
-(CLI e helper privilegiato) e l'azione polkit `io.droidnative.priv`. Per rimuoverlo:
-`sudo apt remove droidnative` (Waydroid, immagini e dati Android restano).
+Apps that require strong Play Integrity (many banking apps, some apps with DRM or anti-cheat)
+may refuse to work even on a registered device.
 
-## Backend GPU
+## GPU backends
 
-![App Android con le icone reali](docs/screenshots/app.png)
+![Android apps with their real icons](docs/screenshots/apps.png)
 
-| Backend | Stack | Quando |
+| Backend | Stack | When |
 |---|---|---|
-| Mesa Native | Mesa (RadeonSI/RADV, Iris/ANV) sul nodo render della GPU | AMD/Intel che pilota il display |
-| NVIDIA Accelerated | waydroid-nvidia, modalità `venus` (Vulkan inoltrato al driver host) | RTX 20+ con driver open ≥ 595.71, `nvidia-drm.modeset=1`, display sulla NVIDIA |
-| NVIDIA Experimental | waydroid-nvidia, modalità `nvidia-prolapse` (NVK + backend NVIDIA in Android) | come sopra; sperimentale |
-| Software Fallback | SwiftShader | sempre; mai dichiarato accelerato |
+| Mesa Native | Mesa (RadeonSI/RADV, Iris/ANV) on the GPU's render node | AMD/Intel driving the display |
+| NVIDIA Accelerated | waydroid-nvidia, `venus` mode (Vulkan forwarded to the host driver) | RTX 20+ with open driver ≥ 595.71, `nvidia-drm.modeset=1`, display on the NVIDIA GPU |
+| NVIDIA Experimental | waydroid-nvidia, `nvidia-prolapse` mode (NVK + NVIDIA backend inside Android) | as above; experimental |
+| Software Fallback | SwiftShader | always; never reported as accelerated |
 
-L'installazione di waydroid-nvidia usa un rilascio **fissato nel codice** (hash di
-`SHA256SUMS` e commit del sorgente), verifica ogni file prima di eseguire l'installer
-ufficiale e sostituisce il pacchetto `waydroid` della distribuzione con la build patchata;
-immagini e dati Android restano. Prima di ogni avvio del container il servizio
-`droidnative-render-node.service` ricontrolla quale `/dev/dri/renderD*` è la GPU NVIDIA: sui
-PC con due GPU il numero può cambiare a ogni riavvio. Dettagli in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Installing waydroid-nvidia uses a release **pinned in the code** (hash of `SHA256SUMS` and
+source commit), verifies every file before running the official installer and replaces the
+distribution's `waydroid` package with the patched build; Android images and data stay.
+Before every container start, `droidnative-render-node.service` checks again which
+`/dev/dri/renderD*` is the NVIDIA GPU: on PCs with two GPUs the number can change at every
+boot. Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Uso da terminale
+## Command line
 
 ```bash
 droidnative doctor
@@ -129,37 +150,40 @@ droidnative setup
 droidnative verify-gpu
 ```
 
-Altri comandi: `setup --run <passo>`, `status`, `session start|stop|restart`, `ui`,
-`apk <file>`, `app list|install|launch|remove`, `gpu-select`, `nvidia-mode`,
-`system-image gapps|vanilla`, `arm-translation install|remove`, `google-id`, `logs`.
-Senza agente polkit (SSH): `DROIDNATIVE_ESCALATOR=sudo droidnative …`.
+Other commands: `setup --run <step>`, `status`, `session start|stop|restart`, `ui`,
+`apk <file>`, `app list|install|launch|remove|touch`, `windows single|multi`, `gpu-select`,
+`nvidia-mode`, `system-image gapps|vanilla`, `arm-translation install|remove`, `google-id`,
+`logs`. Without a polkit agent (SSH): `DROIDNATIVE_ESCALATOR=sudo droidnative …`.
 
-## Stato
+## Status
 
-Verificato su AMD Ryzen 7 7700X + RTX 4070 Ti SUPER (driver 615 open) + iGPU AMD Raphael,
-AnduinOS 2.0.4 (Ubuntu 26.04), GNOME/Mutter su Wayland:
+Verified on an AMD Ryzen 7 7700X + RTX 4070 Ti SUPER (open driver 615) + AMD Raphael iGPU,
+AnduinOS 2.0.4 (Ubuntu 26.04), GNOME/Mutter on Wayland:
 
-| Funzione | Esito |
+| Feature | Result |
 |---|---|
-| Report di compatibilità, valutazione dei backend | ✅ |
-| Installazione Waydroid (repo ufficiale, impronta della chiave verificata), immagini, container | ✅ |
-| Avvio/arresto di Android, attesa del boot | ✅ (4–10 s) |
-| APK: analisi, installazione confermata dal commit di Android, avvio, rimozione | ✅ |
+| Compatibility report, backend assessment | ✅ |
+| Waydroid install (official repository, key fingerprint checked), images, container | ✅ |
+| Android start/stop, waiting for boot | ✅ (4–10 s) |
+| APKs: analysis, install confirmed by Android's commit, launch, removal | ✅ |
 | NVIDIA Accelerated (venus) | ✅ `ANGLE (NVIDIA, Vulkan 1.3.351 (NVIDIA Virtio-GPU Venus (RTX 4070 Ti SUPER)))` |
-| NVIDIA Experimental (nvidia-prolapse) | ✅ gate upstream 22/22, `NVK NV193` |
-| Mesa sull'iGPU con display sulla NVIDIA | ❌ rilevato e segnalato: il compositor rifiuta i buffer |
-| Rete del container con firewall UFW attivo | passo guidato pronto; le regole le applica l'utente |
-| Immagine GAPPS: Play Store e Google Play Services, accelerazione NVIDIA conservata | ✅ GMS 23.10.15, ID dispositivo letto |
-| Traduzione ARM libndk: VLC solo ARM (`armeabi-v7a` e `arm64-v8a`) installato e avviato | ✅ librerie native caricate tramite `libndk_translation.so`; rimozione e reinstallazione verificate |
-| Clipboard, notifiche, condivisione file, X11 annidato | da implementare |
+| NVIDIA Experimental (nvidia-prolapse) | ✅ upstream gate 22/22, `NVK NV193` |
+| Container start after a reboot that swapped the GPUs' render nodes | ✅ repaired automatically before the start |
+| Mesa on the iGPU with the display on the NVIDIA GPU | ❌ detected and reported: the compositor rejects the buffers |
+| Container network with the UFW firewall on | guided step ready; the user applies the rules |
+| GAPPS image: Play Store and Google Play Services, NVIDIA acceleration kept | ✅ GMS 23.10.15, device ID read |
+| ARM translation: ARM-only VLC (`armeabi-v7a` and `arm64-v8a`) with libndk | ✅ native libraries loaded through `libndk_translation.so`; removal and reinstall verified |
+| ARM translation: Age of Empires Mobile (ARM64 only, Tencent ACE) | ❌ with libndk (abort in the translator), ✅ with libhoudini |
+| A window per app (freeform), resizing | ✅; moving by Android's title bar stutters |
+| Clipboard, notifications, file sharing, nested X11 | not implemented yet |
 
-Problemi reali trovati e gestiti: [docs/RESEARCH.md](docs/RESEARCH.md#verifiche-end-to-end-su-questo-pc-2026-10-19).
-Report completo del PC di sviluppo: [docs/COMPATIBILITY-dev-pc.md](docs/COMPATIBILITY-dev-pc.md).
+Real problems found and handled: [docs/RESEARCH.md](docs/RESEARCH.md#end-to-end-checks-on-the-development-pc).
+Full report of the development PC: [docs/COMPATIBILITY-dev-pc.md](docs/COMPATIBILITY-dev-pc.md).
 
-## Compilare dai sorgenti
+## Building from source
 
-Dipendenze (Debian/Ubuntu): `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
-libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup-3.0-dev`, Rust stabile, Node.js 22.
+Dependencies (Debian/Ubuntu): `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
+libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup-3.0-dev`, stable Rust, Node.js 22.
 
 ```bash
 cargo test --workspace
@@ -173,22 +197,22 @@ cargo build --release -p droidnative-cli
 cd app && npm ci && npx tauri build
 ```
 
-Sviluppo: `cd app && npx tauri dev` (con `DROIDNATIVE_TRACE=1` ogni comando IPC viene
-registrato). La CI compila il pacchetto in un container Debian 12 e, sui tag `v*`,
-pubblica la Release con checksum e attestazione di provenienza.
+Development: `cd app && npx tauri dev` (with `DROIDNATIVE_TRACE=1` every IPC command is
+logged). CI builds the package in a Debian 12 container and, on `v*` tags, publishes the
+Release with checksums and a build provenance attestation.
 
-| Percorso | Contenuto |
+| Path | Contents |
 |---|---|
-| `crates/droidnative-core` | rilevamento, backend GPU, runtime Waydroid, APK, operazioni privilegiate, waydroid-nvidia |
-| `crates/droidnative-cli` | binario `droidnative` |
-| `app/` | applicazione Tauri 2 + React/TypeScript |
-| `packaging/` | policy polkit, copyright Debian |
-| `docs/` | ricerca, architettura, report |
+| `crates/droidnative-core` | detection, GPU backends, Waydroid runtime, APKs, privileged operations, waydroid-nvidia, Google image and ARM translation |
+| `crates/droidnative-cli` | the `droidnative` binary |
+| `app/` | Tauri 2 + React/TypeScript application |
+| `packaging/` | polkit policy, systemd unit, maintainer scripts, Debian copyright |
+| `docs/` | research, architecture, reports |
 
-## Licenza
+## License
 
-GPL-3.0-or-later — vedi [LICENSE](LICENSE). DroidNative non include codice di Waydroid né di
-waydroid-nvidia: li installa dalle loro fonti ufficiali, ciascuno con la propria licenza.
-Non include nemmeno le app Google né libndk: l'immagine GAPPS arriva dal canale OTA
-ufficiale di Waydroid e libndk dall'archivio indicato sopra, solo quando scegli i passi
-facoltativi; restano soggetti alle condizioni di Google.
+GPL-3.0-or-later — see [LICENSE](LICENSE). DroidNative includes no code from Waydroid or
+waydroid-nvidia: it installs them from their official sources, each under its own license.
+Nor does it include Google's apps, libndk or libhoudini: the GAPPS image comes from Waydroid's
+official OTA channel and the translators from the archives listed above, only when you choose
+the optional steps; they remain subject to their owners' terms.

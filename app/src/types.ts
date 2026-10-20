@@ -73,6 +73,7 @@ export interface WaydroidInstall {
   distro_package: string | null;
   system_image: "vanilla" | "gapps" | "foss" | "unknown" | null;
   arm_translation: boolean;
+  arm_translator: "libndk" | "libhoudini" | null;
   stale_render_node: { configured: string; nvidia: string } | null;
 }
 
@@ -111,7 +112,11 @@ export interface SetupStep {
   state: StepState;
   op: unknown | null;
   action: string | null;
+  /** On a completed step: `op` is an alternative and this is its button text. */
+  alt_label: string | null;
 }
+
+export type WindowMode = "single" | "multi";
 
 export interface SetupView {
   steps: SetupStep[];
