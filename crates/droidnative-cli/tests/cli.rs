@@ -86,3 +86,18 @@ fn english_outside_italian_locales() {
     let help_it = droidnative_in("it_IT.UTF-8", &["--help"]);
     assert!(String::from_utf8_lossy(&help_it.stdout).contains("Analizza il sistema"));
 }
+
+/// pkexec clears the locale, so the helper must follow `--lang` even though the CLI already
+/// localized its help. The package name is invalid: nothing runs, as root or not.
+#[test]
+fn priv_helper_follows_lang_flag() {
+    let text = |lang: &str, flag: &str| {
+        let out = droidnative_in(lang, &["priv", "--lang", flag, "uninstall-package", "not a package"]);
+        assert!(!out.status.success());
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let en = text("it_IT.UTF-8", "en");
+    assert!(en.contains("must run as root") || en.contains("invalid package name"), "{en}");
+    let it = text("C", "it");
+    assert!(it.contains("vanno eseguiti come root") || it.contains("nome package non valido"), "{it}");
+}

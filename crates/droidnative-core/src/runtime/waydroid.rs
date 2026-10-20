@@ -90,6 +90,8 @@ pub struct WaydroidInstall {
     pub system_image: Option<crate::extras::SystemImage>,
     /// libndk ARM translation present in the overlay and enabled.
     pub arm_translation: bool,
+    /// venus mode with drm_device on another GPU's node: waydroid-nvidia refuses to start the container.
+    pub stale_render_node: Option<crate::nvidia_stack::StaleRenderNode>,
 }
 
 pub fn parse_config(text: &str) -> WaydroidConfig {
@@ -175,6 +177,7 @@ pub fn detect_install(probe: &Probe) -> WaydroidInstall {
         nvidia_stack: crate::nvidia_stack::read_state(fs),
         system_image: config_text.as_deref().map(crate::extras::system_image),
         arm_translation: config_text.as_deref().map(|t| crate::extras::arm_translation_installed(fs, t)).unwrap_or(false),
+        stale_render_node: config_text.as_deref().and_then(|t| crate::nvidia_stack::stale_render_node(fs, t)),
     }
 }
 
@@ -358,6 +361,10 @@ impl AndroidRuntime for WaydroidRuntime {
             // Any IPlatform call unfreezes; a property read is the cheapest.
             let _ = self.run(&["prop", "get", "sys.boot_completed"], Duration::from_secs(20));
             return self.status();
+        }
+        // Without this the session start below would only time out.
+        if let Some(stale) = self.fs.read(WAYDROID_CFG).and_then(|t| crate::nvidia_stack::stale_render_node(&self.fs, &t)) {
+            return Err(RuntimeError::StaleRenderNode(stale));
         }
         // waydroid-nvidia's venus mode renders through the user-level Venus server; the session
         // cannot draw without it (upstream: `systemctl --user enable --now wd-venus.service`).

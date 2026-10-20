@@ -43,13 +43,13 @@ KDE Neon…), sessione Wayland, kernel con binder (i kernel delle distribuzioni 
    ```
 
    ```bash
-   gh attestation verify droidnative_0.3.0_amd64.deb --repo Foglio24/droidnative
+   gh attestation verify droidnative_0.3.1_amd64.deb --repo Foglio24/droidnative
    ```
 
 3. Installa:
 
    ```bash
-   sudo apt install ./droidnative_0.3.0_amd64.deb
+   sudo apt install ./droidnative_0.3.1_amd64.deb
    ```
 
    (il comando va lanciato nella cartella in cui hai scaricato il file)
@@ -106,7 +106,10 @@ Il pacchetto installa `/usr/bin/droidnative-app` (interfaccia), `/usr/bin/droidn
 L'installazione di waydroid-nvidia usa un rilascio **fissato nel codice** (hash di
 `SHA256SUMS` e commit del sorgente), verifica ogni file prima di eseguire l'installer
 ufficiale e sostituisce il pacchetto `waydroid` della distribuzione con la build patchata;
-immagini e dati Android restano. Dettagli in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+immagini e dati Android restano. Prima di ogni avvio del container il servizio
+`droidnative-render-node.service` ricontrolla quale `/dev/dri/renderD*` è la GPU NVIDIA: sui
+PC con due GPU il numero può cambiare a ogni riavvio. Dettagli in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Uso da terminale
 

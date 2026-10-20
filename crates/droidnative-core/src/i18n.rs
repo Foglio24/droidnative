@@ -72,14 +72,16 @@ fn detect() -> Lang {
     Lang::It
 }
 
+static OVERRIDE: OnceLock<Lang> = OnceLock::new();
+
 pub fn lang() -> Lang {
-    *LANG.get_or_init(detect)
+    OVERRIDE.get().copied().unwrap_or_else(|| *LANG.get_or_init(detect))
 }
 
-/// Force the language (the privileged helper does this from `--lang`). Has no effect
-/// once a message has already been produced.
+/// Force the language (the privileged helper does this from `--lang`). Wins over the detected
+/// one even after messages were produced: the CLI localizes its help before parsing arguments.
 pub fn set_override(lang: Lang) {
-    let _ = LANG.set(lang);
+    let _ = OVERRIDE.set(lang);
 }
 
 pub fn pick<'a>(it: &'a str, en: &'a str) -> &'a str {

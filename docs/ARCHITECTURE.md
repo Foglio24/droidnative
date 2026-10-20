@@ -75,6 +75,22 @@
 In modalità `venus` DroidNative avvia il servizio utente `wd-venus.service` prima della
 sessione Android.
 
+### Nodo della GPU NVIDIA a ogni avvio (`droidnative-render-node.service`)
+
+waydroid-nvidia scrive in `drm_device` il nodo `/dev/dri/renderD<N>` della GPU NVIDIA solo
+quando applica una modalità, mentre il suo `ExecStartPre` (`driver-mode verify-active`)
+controlla soltanto. Sui sistemi ibridi i numeri seguono l'ordine di caricamento dei driver e
+possono scambiarsi tra un avvio e l'altro: il container allora non parte. Il pacchetto
+installa `droidnative-render-node.service` (oneshot, `ConditionPathExists` su
+`waydroid-nvidia-setup`, `After=` il dispositivo `sys-subsystem-waydroid_nvidia-render`) e un
+drop-in di `waydroid-container.service` che lo richiede e lo precede. Il servizio esegue
+`droidnative priv repin-render-node`: in modalità venus sceglie il nodo per produttore PCI
+(`0x10de`, come waydroid-nvidia), aggiorna `drm_device` e rigenera nodi LXC e proprietà con
+`waydroid upgrade -o`, che su un container fermo non usa né D-Bus né systemd. Non chiama mai
+`systemctl` sul container: un `stop` o `start` in quel momento si scontrerebbe con il job di
+avvio che lo sta aspettando. Dall'interfaccia la stessa operazione con `--start` avvia poi il
+container.
+
 ## Google Play e traduzione ARM (`extras.rs`)
 
 **Cambio d'immagine** (`SwitchSystemImage`): `waydroid init -f -s GAPPS|VANILLA`. Prima

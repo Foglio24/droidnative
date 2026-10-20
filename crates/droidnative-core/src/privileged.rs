@@ -132,6 +132,9 @@ pub enum PrivilegedOp {
     RemoveArmTranslation,
     /// Read the GSF Android ID needed to register the device with Google.
     GoogleDeviceId,
+    /// Point drm_device at this boot's NVIDIA render node (venus mode); `start_container` also
+    /// starts the container afterwards (never at boot, see `nvidia_stack::repin_render_node`).
+    RepinRenderNode { start_container: bool },
 }
 
 impl PrivilegedOp {
@@ -158,6 +161,8 @@ impl PrivilegedOp {
             Self::InstallArmTranslation => v(&["install-arm-translation"]),
             Self::RemoveArmTranslation => v(&["remove-arm-translation"]),
             Self::GoogleDeviceId => v(&["google-device-id"]),
+            Self::RepinRenderNode { start_container: false } => v(&["repin-render-node"]),
+            Self::RepinRenderNode { start_container: true } => v(&["repin-render-node", "--start"]),
         }
     }
 
@@ -218,6 +223,10 @@ impl PrivilegedOp {
             }
             Self::RemoveArmTranslation => tr!("Rimuovere la traduzione ARM libndk", "Remove the libndk ARM translation"),
             Self::GoogleDeviceId => tr!("Leggere l'ID dispositivo Google (GSF Android ID)", "Read the Google device ID (GSF Android ID)"),
+            Self::RepinRenderNode { .. } => tr!(
+                "Aggiornare il nodo della GPU NVIDIA in waydroid.cfg (cambiato dopo il riavvio), rigenerare la configurazione del container e avviarlo",
+                "Update the NVIDIA GPU node in waydroid.cfg (changed after the reboot), regenerate the container configuration and start it"
+            ),
         }
     }
 
@@ -229,7 +238,7 @@ impl PrivilegedOp {
             Self::NvidiaSetMode { .. } => Duration::from_secs(1800),
             Self::SwitchSystemImage { .. } => Duration::from_secs(5400),
             Self::InstallArmTranslation | Self::RemoveArmTranslation => Duration::from_secs(1200),
-            Self::SelectGpu { .. } => Duration::from_secs(300),
+            Self::SelectGpu { .. } | Self::RepinRenderNode { .. } => Duration::from_secs(600),
             _ => Duration::from_secs(120),
         }
     }
@@ -417,6 +426,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         PrivilegedOp::InstallArmTranslation => crate::extras::install_libndk(&crate::extras::LIBNDK_A13, fs, cmd),
         PrivilegedOp::RemoveArmTranslation => crate::extras::remove_libndk(fs, cmd),
         PrivilegedOp::GoogleDeviceId => crate::extras::google_device_id(cmd),
+        PrivilegedOp::RepinRenderNode { start_container } => crate::nvidia_stack::repin_render_node(*start_container, fs, cmd),
         PrivilegedOp::AllowContainerNetwork => {
             let mut log = CmdOutput::ok("");
             for rule in UFW_CONTAINER_RULES {

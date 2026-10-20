@@ -315,6 +315,69 @@ pub fn set_mode(mode: NvidiaMode, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
     Ok(CmdOutput::ok(log))
 }
 
+/// The NVIDIA GPU's render node, chosen by PCI vendor as waydroid-nvidia does. The renderD numbers
+/// follow driver load order, which on hybrid desktops changes from one boot to the next.
+pub fn nvidia_render_node(fs: &HostFs) -> Option<String> {
+    let mut nodes: Vec<String> = fs.list("/sys/class/drm").into_iter().filter(|n| n.starts_with("renderD")).collect();
+    nodes.sort();
+    nodes
+        .into_iter()
+        .find(|n| fs.read_trimmed(format!("/sys/class/drm/{n}/device/vendor")).as_deref() == Some("0x10de"))
+        .map(|n| format!("/dev/dri/{n}"))
+}
+
+/// A `drm_device` left on another GPU's node. In venus mode waydroid-nvidia requires the NVIDIA
+/// node but writes its number only when a mode is applied, and its container check then refuses to
+/// start: seen on hardware after a reboot swapped renderD128 and renderD129.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaleRenderNode {
+    pub configured: String,
+    pub nvidia: String,
+}
+
+pub fn stale_render_node(fs: &HostFs, cfg_text: &str) -> Option<StaleRenderNode> {
+    if !fs.exists(SETUP_BIN) || configured_mode(cfg_text) != Some(NvidiaMode::Venus) {
+        return None;
+    }
+    let nvidia = nvidia_render_node(fs)?;
+    let configured = Ini::parse(cfg_text).get("waydroid", "drm_device").unwrap_or_default().to_string();
+    (configured != nvidia).then_some(StaleRenderNode { configured, nvidia })
+}
+
+/// Points `drm_device` at this boot's NVIDIA node and regenerates Waydroid's LXC nodes and
+/// properties (`waydroid upgrade -o` does no D-Bus or systemd calls on a stopped container).
+/// droidnative-render-node.service runs it before every container start, so without
+/// `start_container` it never touches the unit: a stop or start would collide with the start job
+/// that is waiting for it.
+pub fn repin_render_node(start_container: bool, fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
+    let mut log = String::new();
+    let cfg_path = fs.path(WAYDROID_CFG);
+    let text = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    match stale_render_node(fs, &text) {
+        None if fs.exists(SETUP_BIN) && configured_mode(&text) == Some(NvidiaMode::Venus) && nvidia_render_node(fs).is_none() => {
+            return Err(PrivError::Missing("NVIDIA render node (/dev/dri/renderD*)"));
+        }
+        None => log.push_str(&tr!("drm_device già corretto\n", "drm_device already correct\n")),
+        Some(StaleRenderNode { configured, nvidia }) => {
+            let mut ini = Ini::parse(&text);
+            ini.set("waydroid", "drm_device", &nvidia);
+            std::fs::write(&cfg_path, ini.render())?;
+            log.push_str(&tr!(
+                "drm_device: {configured} → {nvidia} (nodo della GPU NVIDIA in questo avvio)\n",
+                "drm_device: {configured} → {nvidia} (the NVIDIA GPU's node in this boot)\n"
+            ));
+            let waydroid = cmd.which("waydroid").map(|p| p.to_string_lossy().into_owned()).ok_or(PrivError::Missing("Waydroid"))?;
+            step(cmd, &mut log, &waydroid, &["upgrade", "-o"], Duration::from_secs(300))?;
+        }
+    }
+    if start_container {
+        let unit = crate::runtime::waydroid::CONTAINER_UNIT;
+        let _ = cmd.run("systemctl", &["reset-failed", unit]);
+        step(cmd, &mut log, "systemctl", &["start", unit], Duration::from_secs(180))?;
+    }
+    Ok(CmdOutput::ok(log))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -458,6 +521,57 @@ pub(crate) mod tests {
         let state = read_state(&fs).unwrap();
         assert_eq!(state.mode, NvidiaMode::Venus);
         assert!(out.stdout.contains("Done (venus mode)"));
+    }
+
+    /// This PC after a reboot: the NVIDIA GPU became renderD128, the config still says renderD129.
+    fn swapped_nodes(mode: &str) -> (tempfile::TempDir, HostFs) {
+        let root = tempfile::tempdir().unwrap();
+        let fs = HostFs::rooted(root.path());
+        for (node, vendor) in [("renderD128", "0x10de"), ("renderD129", "0x1002")] {
+            std::fs::create_dir_all(fs.path(format!("/sys/class/drm/{node}/device"))).unwrap();
+            std::fs::write(fs.path(format!("/sys/class/drm/{node}/device/vendor")), format!("{vendor}\n")).unwrap();
+        }
+        std::fs::create_dir_all(fs.path("/usr/bin")).unwrap();
+        std::fs::write(fs.path(SETUP_BIN), "#!/bin/sh").unwrap();
+        std::fs::create_dir_all(fs.path("/var/lib/waydroid")).unwrap();
+        let cfg = format!("[waydroid]\narch = x86_64\ndrm_device = /dev/dri/renderD129\nnvidia_driver_mode = {mode}\n\n[properties]\nx = 1\n");
+        std::fs::write(fs.path(WAYDROID_CFG), cfg).unwrap();
+        (root, fs)
+    }
+
+    #[test]
+    fn swapped_render_node_is_repinned_without_touching_systemd() {
+        let (_root, fs) = swapped_nodes("venus");
+        assert_eq!(nvidia_render_node(&fs).as_deref(), Some("/dev/dri/renderD128"));
+        let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
+        let stale = stale_render_node(&fs, &cfg).unwrap();
+        assert_eq!((stale.configured.as_str(), stale.nvidia.as_str()), ("/dev/dri/renderD129", "/dev/dri/renderD128"));
+
+        let runner = FakeRunner::new().with_program("waydroid").respond("/usr/bin/waydroid upgrade -o", CmdOutput::ok(""));
+        let out = repin_render_node(false, &fs, &runner).unwrap();
+        let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
+        assert!(cfg.contains("drm_device = /dev/dri/renderD128") && cfg.contains("x = 1"));
+        assert!(stale_render_node(&fs, &cfg).is_none());
+        assert!(out.stdout.contains("renderD129 → /dev/dri/renderD128"));
+        assert_eq!(runner.calls(), vec!["/usr/bin/waydroid upgrade -o"], "boot path must not call systemctl");
+
+        // Already right: nothing to regenerate; from the UI the container is started afterwards.
+        let runner = FakeRunner::new()
+            .respond("systemctl reset-failed waydroid-container.service", CmdOutput::ok(""))
+            .respond("systemctl start waydroid-container.service", CmdOutput::ok(""));
+        repin_render_node(true, &fs, &runner).unwrap();
+        assert_eq!(runner.calls(), vec!["systemctl reset-failed waydroid-container.service", "systemctl start waydroid-container.service"]);
+    }
+
+    #[test]
+    fn other_modes_keep_their_render_node() {
+        let (_root, fs) = swapped_nodes("nvidia-prolapse");
+        let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap();
+        assert!(stale_render_node(&fs, &cfg).is_none());
+        let runner = FakeRunner::new();
+        repin_render_node(false, &fs, &runner).unwrap();
+        assert!(runner.calls().is_empty());
+        assert!(std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap().contains("renderD129"));
     }
 
     #[test]

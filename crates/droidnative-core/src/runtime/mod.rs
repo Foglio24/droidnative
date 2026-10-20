@@ -21,6 +21,8 @@ pub enum RuntimeError {
     CommandFailed { command: String, output: String },
     Timeout(String),
     Verification(String),
+    /// waydroid-nvidia refuses to start the container: see `nvidia_stack::StaleRenderNode`.
+    StaleRenderNode(crate::nvidia_stack::StaleRenderNode),
     Privileged(PrivError),
     Io(std::io::Error),
 }
@@ -38,6 +40,13 @@ impl std::fmt::Display for RuntimeError {
             Self::CommandFailed { command, output } => tr!("comando `{command}` fallito: {output}", "command `{command}` failed: {output}"),
             Self::Timeout(what) => tr!("tempo scaduto: {what}", "timed out: {what}"),
             Self::Verification(m) => tr!("verifica fallita: {m}", "verification failed: {m}"),
+            Self::StaleRenderNode(n) => {
+                let (old, new) = (&n.configured, &n.nvidia);
+                tr!(
+                    "Android non può partire: dopo il riavvio la GPU NVIDIA è diventata {new}, ma Waydroid usa ancora {old}. Apri Installazione e premi Esegui su «Avviare il servizio del container»",
+                    "Android cannot start: after the reboot the NVIDIA GPU became {new}, but Waydroid still uses {old}. Open Setup and press Run on “Start the container service”"
+                )
+            }
             Self::Privileged(e) => e.to_string(),
             Self::Io(e) => e.to_string(),
         };

@@ -73,6 +73,7 @@ export interface WaydroidInstall {
   distro_package: string | null;
   system_image: "vanilla" | "gapps" | "foss" | "unknown" | null;
   arm_translation: boolean;
+  stale_render_node: { configured: string; nvidia: string } | null;
 }
 
 export type NvidiaMode = "venus" | "prolapse";

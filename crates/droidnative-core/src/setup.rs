@@ -105,10 +105,21 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
     });
 
     let service_active = w.container_service.is_active();
+    // waydroid-nvidia's start check fails on a stale render node, so enabling the unit cannot help.
+    let stale = w.stale_render_node.as_ref().filter(|_| !service_active && w.initialized);
     steps.push(SetupStep {
         id: "container_service",
         title: tr!("Avviare il servizio del container", "Start the container service"),
-        detail: format!("waydroid-container.service: {}", w.container_service.active.clone().unwrap_or_else(|| tr!("non presente", "not present"))),
+        detail: match stale {
+            Some(n) => {
+                let (old, new) = (&n.configured, &n.nvidia);
+                tr!(
+                    "dopo il riavvio la GPU NVIDIA è diventata {new}, ma Waydroid usa ancora {old}: waydroid-nvidia non avvia il container finché il nodo non viene aggiornato",
+                    "after the reboot the NVIDIA GPU became {new}, but Waydroid still uses {old}: waydroid-nvidia will not start the container until the node is updated"
+                )
+            }
+            None => format!("waydroid-container.service: {}", w.container_service.active.clone().unwrap_or_else(|| tr!("non presente", "not present"))),
+        },
         state: if service_active {
             StepState::Done
         } else if w.initialized {
@@ -116,7 +127,10 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         } else {
             StepState::Blocked
         },
-        op: (!service_active && w.initialized).then_some(PrivilegedOp::EnableContainerService),
+        op: match stale {
+            Some(_) => Some(PrivilegedOp::RepinRenderNode { start_container: true }),
+            None => (!service_active && w.initialized).then_some(PrivilegedOp::EnableContainerService),
+        },
         action: None,
     });
 

@@ -55,7 +55,13 @@ jobs:
         run: |
           cd target/release/bundle/deb
           dpkg-deb -I ./*.deb
-          dpkg-deb -c ./*.deb | grep -E 'usr/bin/droidnative$|io.droidnative.policy|droidnative.desktop'
+          dpkg-deb -c ./*.deb > contents.txt
+          for f in usr/bin/droidnative usr/bin/droidnative-app io.droidnative.policy droidnative.desktop \
+                   droidnative-render-node.service waydroid-container.service.d/droidnative-render-node.conf; do
+            grep -q -- "$f\$" contents.txt || { echo "manca $f nel pacchetto"; exit 1; }
+          done
+          dpkg-deb --ctrl-tarfile ./*.deb | tar -t | grep -qxE '(\./)?postinst' || { echo "manca postinst"; exit 1; }
+          rm contents.txt
           sha256sum ./*.deb | sed 's# \./# #' > SHA256SUMS
           cat SHA256SUMS
 
@@ -93,7 +99,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="release-notes/${GITHUB_REF_NAME}.md"
+          tag="$GITHUB_REF_NAME"
+          notes="release-notes/${tag}.md"
           [ -f "$notes" ] || { echo "manca $notes"; exit 1; }
-          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --title "DroidNative ${GITHUB_REF_NAME}" --notes-file "$notes"
+          export GH_REPO="$GITHUB_REPOSITORY"
+          # Draft first, assets with retries, published only once the uploaded .deb matches the
+          # attested one: a transient GitHub error must never leave a half-published release.
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --draft --title "DroidNative ${tag}" --notes-file "$notes"
+          ok=
+          for i in 1 2 3; do
+            if gh release upload "$tag" dist/*.deb dist/SHA256SUMS --clobber; then ok=1; break; fi
+            sleep 20
+          done
+          [ -n "$ok" ] || { echo "upload non riuscito"; exit 1; }
+          rm -rf check && gh release download "$tag" --pattern '*.deb' --dir check
+          (cd check && sha256sum -c ../dist/SHA256SUMS)
+          gh release edit "$tag" --draft=false --latest

@@ -1,0 +1,12 @@
+[Unit]
+Description=DroidNative: point Waydroid at this boot's NVIDIA render node
+Documentation=https://github.com/Foglio24/droidnative
+# Only waydroid-nvidia's venus mode pins a render node; the helper changes nothing otherwise.
+ConditionPathExists=/usr/bin/waydroid-nvidia-setup
+# The NVIDIA render node's device unit (udev alias from waydroid-nvidia), pulled in by the container.
+After=sys-subsystem-waydroid_nvidia-render.device
+Before=waydroid-container.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/droidnative priv --lang en repin-render-node

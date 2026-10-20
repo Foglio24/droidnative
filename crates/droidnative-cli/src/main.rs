@@ -190,6 +190,11 @@ enum PrivCommand {
     InstallArmTranslation,
     RemoveArmTranslation,
     GoogleDeviceId,
+    /// Runs as root from droidnative-render-node.service before every container start.
+    RepinRenderNode {
+        #[arg(long)]
+        start: bool,
+    },
 }
 
 fn parse_mode(s: &str) -> Result<NvidiaMode, String> {
@@ -250,6 +255,7 @@ impl PrivCommand {
             Self::InstallArmTranslation => PrivilegedOp::InstallArmTranslation,
             Self::RemoveArmTranslation => PrivilegedOp::RemoveArmTranslation,
             Self::GoogleDeviceId => PrivilegedOp::GoogleDeviceId,
+            Self::RepinRenderNode { start } => PrivilegedOp::RepinRenderNode { start_container: start },
         }
     }
 }

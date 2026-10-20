@@ -338,6 +338,17 @@ fn runtime_checks(r: &HostReport) -> Vec<Check> {
         let svc = tr!("Servizio container", "Container service");
         c.push(if w.container_service.is_active() {
             Check::pass("container_service", &svc, tr!("waydroid-container.service attivo", "waydroid-container.service active"))
+        } else if let Some(n) = &w.stale_render_node {
+            let (old, new) = (&n.configured, &n.nvidia);
+            Check::fail(
+                "container_service",
+                &svc,
+                tr!(
+                    "non parte: la GPU NVIDIA ora è {new}, Waydroid usa ancora {old} (numerazione cambiata al riavvio)",
+                    "won't start: the NVIDIA GPU is now {new}, Waydroid still uses {old} (numbering changed at reboot)"
+                ),
+            )
+            .remedy(tr!("Installazione guidata → «Avviare il servizio del container»", "Guided setup → “Start the container service”"))
         } else {
             let state = w.container_service.active.clone().unwrap_or_else(|| tr!("non trovato", "not found"));
             Check::missing("container_service", &svc, format!("waydroid-container.service: {state}"))
