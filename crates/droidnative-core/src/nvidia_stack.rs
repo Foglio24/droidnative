@@ -289,6 +289,7 @@ pub fn install(release: &NvidiaRelease, mode: NvidiaMode, fs: &HostFs, cmd: &dyn
         Duration::from_secs(3600),
     )?;
     step(cmd, &mut log, SETUP_BIN, &["--mode", mode.as_arg()], Duration::from_secs(1800))?;
+    apply_subsurface_policy(fs, cmd, &mut log)?;
 
     let state = StackState {
         tag: release.tag.to_string(),
@@ -308,11 +309,85 @@ pub fn set_mode(mode: NvidiaMode, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
     let mut log = String::new();
     crate::extras::ensure_container_stopped(cmd, &mut log, Duration::from_secs(1))?;
     step(cmd, &mut log, SETUP_BIN, &["--mode", mode.as_arg()], Duration::from_secs(1800))?;
+    apply_subsurface_policy(fs, cmd, &mut log)?;
     if let Some(mut state) = read_state(fs) {
         state.mode = mode;
         std::fs::write(fs.path(STATE_FILE), serde_json::to_string_pretty(&state).unwrap_or_default())?;
     }
     Ok(CmdOutput::ok(log))
+}
+
+pub const SUBSURFACE_PROP: &str = "persist.waydroid.use_subsurface";
+
+/// waydroid-nvidia's direct-subsurface path and its per-app windows are tested on KWin only. On
+/// GNOME/Mutter the composer HAL can abort and take SurfaceFlinger down (upstream issue #21,
+/// seen here as `HidlComposer … DEAD_OBJECT`), and moving a per-app window leaves trails over the
+/// whole desktop (seen on this project's development PC).
+pub fn kwin_compositor(compositor: Option<&str>) -> bool {
+    compositor == Some("KWin")
+}
+
+/// Per-app windows work unless waydroid-nvidia renders for a compositor other than KWin.
+pub fn per_app_windows_supported(nvidia_installed: bool, compositor: Option<&str>) -> bool {
+    !nvidia_installed || kwin_compositor(compositor)
+}
+
+/// Why per-app windows are refused here, if they are.
+pub fn per_app_windows_refusal(nvidia_installed: bool, compositor: Option<&str>) -> Option<String> {
+    if per_app_windows_supported(nvidia_installed, compositor) {
+        return None;
+    }
+    let comp = compositor.unwrap_or("?");
+    Some(tr!(
+        "le finestre separate non sono disponibili con waydroid-nvidia su {comp}: spostandole lasciano scie su tutto lo schermo (funzionano su KDE/KWin)",
+        "per-app windows are not available with waydroid-nvidia on {comp}: moving them leaves trails over the whole screen (they work on KDE/KWin)"
+    ))
+}
+
+/// As root, without the user's environment: is a KWin Wayland session running?
+pub fn kwin_running(fs: &HostFs) -> bool {
+    fs.list("/proc")
+        .iter()
+        .filter(|p| p.bytes().all(|b| b.is_ascii_digit()))
+        .any(|p| fs.read_trimmed(format!("/proc/{p}/comm")).as_deref() == Some("kwin_wayland"))
+}
+
+/// `persist.waydroid.use_subsurface` from waydroid.cfg's `[properties]`.
+pub fn subsurface_enabled(cfg_text: &str) -> Option<bool> {
+    Ini::parse(cfg_text).get("properties", SUBSURFACE_PROP).map(|v| v == "true")
+}
+
+/// Writes the property and regenerates Waydroid's properties (the container restarts if running).
+/// With it off, SurfaceFlinger composes on the GPU (still Venus/NVIDIA) and hands the compositor a
+/// single buffer per window.
+pub fn set_subsurface(enabled: bool, fs: &HostFs, cmd: &dyn CommandRunner) -> Result<CmdOutput, PrivError> {
+    let mut log = String::new();
+    write_subsurface(enabled, fs, cmd, &mut log)?;
+    Ok(CmdOutput::ok(log))
+}
+
+fn write_subsurface(enabled: bool, fs: &HostFs, cmd: &dyn CommandRunner, log: &mut String) -> Result<(), PrivError> {
+    let cfg_path = fs.path(WAYDROID_CFG);
+    let mut ini = Ini::parse(&std::fs::read_to_string(&cfg_path)?);
+    ini.set("properties", SUBSURFACE_PROP, if enabled { "true" } else { "false" });
+    std::fs::write(&cfg_path, ini.render())?;
+    let value = if enabled { "true" } else { "false" };
+    log.push_str(&format!("{SUBSURFACE_PROP} = {value}\n"));
+    crate::extras::regenerate_props(fs, cmd, log)
+}
+
+/// waydroid-nvidia-setup writes `use_subsurface = true` on every run; turn it back off unless the
+/// session runs on KWin.
+pub(crate) fn apply_subsurface_policy(fs: &HostFs, cmd: &dyn CommandRunner, log: &mut String) -> Result<(), PrivError> {
+    let cfg = std::fs::read_to_string(fs.path(WAYDROID_CFG)).unwrap_or_default();
+    if subsurface_enabled(&cfg) != Some(true) || kwin_running(fs) {
+        return Ok(());
+    }
+    log.push_str(&tr!(
+        "waydroid-nvidia: subsurface diretto disattivato (testato solo su KWin; su questo desktop fa cadere Android e lascia scie)\n",
+        "waydroid-nvidia: direct subsurface turned off (tested on KWin only; on this desktop it brings Android down and leaves trails)\n"
+    ));
+    write_subsurface(false, fs, cmd, log)
 }
 
 /// The NVIDIA GPU's render node, chosen by PCI vendor as waydroid-nvidia does. The renderD numbers
@@ -561,6 +636,42 @@ pub(crate) mod tests {
             .respond("systemctl start waydroid-container.service", CmdOutput::ok(""));
         repin_render_node(true, &fs, &runner).unwrap();
         assert_eq!(runner.calls(), vec!["systemctl reset-failed waydroid-container.service", "systemctl start waydroid-container.service"]);
+    }
+
+    #[test]
+    fn subsurface_goes_off_after_setup_unless_kwin_runs() {
+        let (_root, fs) = swapped_nodes("venus");
+        let cfg = fs.path(WAYDROID_CFG);
+        // What waydroid-nvidia-setup writes on every run.
+        let with_subsurface = std::fs::read_to_string(&cfg).unwrap().replace("x = 1", &format!("x = 1\n{SUBSURFACE_PROP} = true"));
+        std::fs::write(&cfg, &with_subsurface).unwrap();
+        std::fs::create_dir_all(fs.path("/proc/1500")).unwrap();
+        std::fs::write(fs.path("/proc/1500/comm"), "gnome-shell\n").unwrap();
+        std::fs::create_dir_all(fs.path("/proc/self")).unwrap();
+        std::fs::write(fs.path("/proc/self/comm"), "kwin_wayland\n").unwrap();
+        let runner = FakeRunner::new()
+            .with_program("waydroid")
+            .respond("/usr/bin/waydroid upgrade -o", CmdOutput::ok(""))
+            .respond("systemctl is-active waydroid-container.service", CmdOutput::ok("inactive\n"));
+
+        let mut log = String::new();
+        apply_subsurface_policy(&fs, &runner, &mut log).unwrap();
+        assert_eq!(subsurface_enabled(&std::fs::read_to_string(&cfg).unwrap()), Some(false), "only numeric /proc entries count");
+        assert!(runner.calls().contains(&"/usr/bin/waydroid upgrade -o".to_string()));
+
+        std::fs::write(&cfg, &with_subsurface).unwrap();
+        std::fs::create_dir_all(fs.path("/proc/1600")).unwrap();
+        std::fs::write(fs.path("/proc/1600/comm"), "kwin_wayland\n").unwrap();
+        apply_subsurface_policy(&fs, &runner, &mut log).unwrap();
+        assert_eq!(subsurface_enabled(&std::fs::read_to_string(&cfg).unwrap()), Some(true), "KWin keeps waydroid-nvidia's default");
+    }
+
+    #[test]
+    fn per_app_windows_need_kwin_only_with_waydroid_nvidia() {
+        assert!(per_app_windows_refusal(true, Some("Mutter")).unwrap().contains("Mutter"));
+        assert!(per_app_windows_refusal(true, None).is_some());
+        assert!(per_app_windows_refusal(true, Some("KWin")).is_none());
+        assert!(per_app_windows_refusal(false, Some("Mutter")).is_none(), "Mesa and software are not affected");
     }
 
     #[test]

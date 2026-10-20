@@ -90,6 +90,19 @@ neither D-Bus nor systemd on a stopped container. It never calls `systemctl` on 
 a `stop` or `start` at that moment would collide with the start job waiting for it. From the
 UI the same operation with `--start` then starts the container.
 
+### Direct subsurface outside KWin (`nvidia_stack::apply_subsurface_policy`)
+
+`waydroid-nvidia-setup` writes `persist.waydroid.use_subsurface = true` into `[properties]` on
+every run. That path hands Android's layer buffers to the compositor as Wayland subsurfaces and
+is tested on KWin only: on GNOME/Mutter the composer HAL can abort and take SurfaceFlinger down
+(upstream issue #21, seen here as `HidlComposer::createLayer … DEAD_OBJECT`) and windows leave
+trails. After every `waydroid-nvidia-setup` it runs (install, mode switch, image switch),
+DroidNative sets the property back to `false` unless a `kwin_wayland` process is running (the
+helper runs as root without the user's environment, so it looks at `/proc`), then regenerates
+the properties with `waydroid upgrade -o`. SurfaceFlinger then composes through its
+RenderEngine, still ANGLE on Venus. The report and the GPU setup step flag a `true` value on a
+compositor other than KWin and offer `SetSubsurface { enabled: false }`.
+
 ## Google Play and ARM translation (`extras.rs`)
 
 **Image switch** (`SwitchSystemImage`): `waydroid init -f -s GAPPS|VANILLA`. Before and after,
@@ -128,9 +141,21 @@ capability allows.
 
 **Window mode**: `persist.waydroid.multi_windows`. With `true`, Waydroid's init bind-mounts
 `pc.xml` (`android.hardware.type.pc`, `android.software.freeform_window_management`) and the
-hwcomposer gives every task its own Wayland toplevel; tasks open in `freeform` mode and
-resizing a task resizes its window. Android reads the features at boot, so the change restarts
-the session.
+hwcomposer gives every task its own Wayland toplevel; tasks open in `freeform` mode. Android
+reads the features at boot, so the change restarts the session. With waydroid-nvidia on a
+compositor other than KWin the mode is refused (`per_app_windows_refusal`): on GNOME moving a
+window leaves trails over the whole desktop, with the direct subsurface on or off, and the IME
+becomes a toplevel of its own that takes the keyboard focus.
+
+**The single window on GNOME**: waydroid-nvidia's hwcomposer creates an undecorated, maximized
+toplevel. `persist.waydroid.window_decorations=true` asks for server-side decorations through
+`zxdg_decoration_manager_v1`, which Mutter does not implement: the window then becomes a normal
+(non-maximized) toplevel but still has no title bar or borders. `persist.waydroid.width/height`
+make `choose_width_height` ignore the compositor's size hints, so they lock the window size.
+Running the session inside gamescope (`--backend wayland --expose-wayland`, `WAYLAND_DISPLAY`
+set to its socket) works and gamescope draws a libdecor title bar, but its nested resolution is
+fixed, so Android is scaled into the window with black bands. DroidNative keeps Waydroid's
+default maximized window.
 
 **Mouse as touch**: `persist.waydroid.fake_touch`, a comma-separated list of packages (`*`
 globs allowed). Waydroid's `ViewRootImpl` patch reads it when an app creates a window and then

@@ -1,6 +1,6 @@
 # DroidNative compatibility report
 
-Host: **dev-pc** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.4.0
+Host: **dev-pc** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.4.1
 
 **Result: compatible**
 
@@ -10,8 +10,8 @@ Host: **dev-pc** · AnduinOS 2.0.4 · kernel 7.0.0-38-generic · DroidNative 0.4
 |---|---|---|
 | ✅ | Distribution | AnduinOS 2.0.4 — base Ubuntu 26.04 (resolute) |
 | ✅ | CPU | AMD Ryzen 7 7700X 8-Core Processor · 16 thread · x86_64 |
-| ✅ | Memory | 30.5 GiB total, 21.3 GiB available |
-| ✅ | Disk space | 23.4 GiB free for /var/lib/waydroid |
+| ✅ | Memory | 30.5 GiB total, 23.4 GiB available |
+| ✅ | Disk space | 21.9 GiB free for /var/lib/waydroid |
 | ✅ | systemd | systemd 259 (259.9-0ubuntu0.1) |
 
 ## Kernel and container

@@ -220,7 +220,16 @@ async fn window_mode(state: tauri::State<'_, AppState>) -> Result<WindowMode, St
 #[tauri::command]
 async fn set_window_mode(state: tauri::State<'_, AppState>, mode: WindowMode) -> Result<(), String> {
     let rt = state.runtime.clone();
-    blocking("set_window_mode", move || rt.set_window_mode(mode).map_err(|e| e.to_string())).await
+    blocking("set_window_mode", move || {
+        if mode == WindowMode::Multi {
+            let host = probe_local();
+            if let Some(why) = droidnative_core::nvidia_stack::per_app_windows_refusal(host.waydroid.nvidia_setup.is_some(), host.session.compositor.as_deref()) {
+                return Err(why);
+            }
+        }
+        rt.set_window_mode(mode).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]

@@ -46,8 +46,17 @@ function WindowModeCard(p: Shared) {
     }
   };
 
+  const w = p.report?.host.waydroid;
+  const compositor = p.report?.host.session.compositor ?? "?";
+  // waydroid-nvidia's per-app windows leave trails outside KWin (see nvidia_stack::per_app_windows_supported).
+  const multiBlocked = !!w?.nvidia_setup && compositor !== "KWin";
+
   const option = (m: WindowMode, icon: string, label: string) => (
-    <button aria-pressed={mode === m} disabled={busy !== null || mode === null} onClick={() => mode !== m && setAsking(m)}>
+    <button
+      aria-pressed={mode === m}
+      disabled={busy !== null || mode === null || (m === "multi" && multiBlocked)}
+      onClick={() => mode !== m && setAsking(m)}
+    >
       <Icon path={icon} size={20} />
       {label}
     </button>
@@ -62,6 +71,11 @@ function WindowModeCard(p: Shared) {
       <p className="small muted" style={{ marginBottom: 0 }}>
         {mode === null ? t("windows.unknown") : t(mode === "multi" ? "windows.multi.desc" : "windows.single.desc")}
       </p>
+      {multiBlocked && (
+        <p className="small" style={{ marginBottom: 0 }}>
+          {t(mode === "multi" ? "windows.multi.leave" : "windows.multi.unsupported", { compositor })}
+        </p>
+      )}
       {busy === "windows" && <div className="progress" />}
       {asking && (
         <Dialog title={t("windows.confirm.title")} confirmLabel={t("common.continue")} onCancel={() => setAsking(null)} onConfirm={() => void change(asking)}>

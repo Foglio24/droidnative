@@ -135,6 +135,8 @@ pub enum PrivilegedOp {
     /// Point drm_device at this boot's NVIDIA render node (venus mode); `start_container` also
     /// starts the container afterwards (never at boot, see `nvidia_stack::repin_render_node`).
     RepinRenderNode { start_container: bool },
+    /// waydroid-nvidia's `persist.waydroid.use_subsurface` (off on compositors other than KWin).
+    SetSubsurface { enabled: bool },
 }
 
 impl PrivilegedOp {
@@ -163,6 +165,7 @@ impl PrivilegedOp {
             Self::GoogleDeviceId => v(&["google-device-id"]),
             Self::RepinRenderNode { start_container: false } => v(&["repin-render-node"]),
             Self::RepinRenderNode { start_container: true } => v(&["repin-render-node", "--start"]),
+            Self::SetSubsurface { enabled } => v(&["set-subsurface", if *enabled { "on" } else { "off" }]),
         }
     }
 
@@ -227,6 +230,14 @@ impl PrivilegedOp {
             }
             Self::RemoveArmTranslation => tr!("Rimuovere la traduzione ARM", "Remove the ARM translation"),
             Self::GoogleDeviceId => tr!("Leggere l'ID dispositivo Google (GSF Android ID)", "Read the Google device ID (GSF Android ID)"),
+            Self::SetSubsurface { enabled: false } => tr!(
+                "Disattivare il subsurface diretto di waydroid-nvidia (testato solo su KWin): Android compone l'immagine sulla GPU NVIDIA e il desktop riceve un'immagine per finestra. Android verrà riavviato.",
+                "Turn off waydroid-nvidia's direct subsurface (tested on KWin only): Android composes the image on the NVIDIA GPU and the desktop gets one image per window. Android will restart."
+            ),
+            Self::SetSubsurface { enabled: true } => tr!(
+                "Attivare il subsurface diretto di waydroid-nvidia (consigliato solo su KWin). Android verrà riavviato.",
+                "Turn on waydroid-nvidia's direct subsurface (recommended on KWin only). Android will restart."
+            ),
             Self::RepinRenderNode { .. } => tr!(
                 "Aggiornare il nodo della GPU NVIDIA in waydroid.cfg (cambiato dopo il riavvio), rigenerare la configurazione del container e avviarlo",
                 "Update the NVIDIA GPU node in waydroid.cfg (changed after the reboot), regenerate the container configuration and start it"
@@ -242,7 +253,7 @@ impl PrivilegedOp {
             Self::NvidiaSetMode { .. } => Duration::from_secs(1800),
             Self::SwitchSystemImage { .. } => Duration::from_secs(5400),
             Self::InstallArmTranslation { .. } | Self::RemoveArmTranslation => Duration::from_secs(1200),
-            Self::SelectGpu { .. } | Self::RepinRenderNode { .. } => Duration::from_secs(600),
+            Self::SelectGpu { .. } | Self::RepinRenderNode { .. } | Self::SetSubsurface { .. } => Duration::from_secs(600),
             _ => Duration::from_secs(120),
         }
     }
@@ -430,6 +441,7 @@ pub fn execute(op: &PrivilegedOp, fs: &HostFs, cmd: &dyn CommandRunner) -> Resul
         PrivilegedOp::InstallArmTranslation { translator } => crate::extras::install_translation(*translator, fs, cmd),
         PrivilegedOp::RemoveArmTranslation => crate::extras::remove_translation(fs, cmd),
         PrivilegedOp::GoogleDeviceId => crate::extras::google_device_id(cmd),
+        PrivilegedOp::SetSubsurface { enabled } => crate::nvidia_stack::set_subsurface(*enabled, fs, cmd),
         PrivilegedOp::RepinRenderNode { start_container } => crate::nvidia_stack::repin_render_node(*start_container, fs, cmd),
         PrivilegedOp::AllowContainerNetwork => {
             let mut log = CmdOutput::ok("");

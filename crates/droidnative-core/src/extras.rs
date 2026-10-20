@@ -222,7 +222,7 @@ fn waydroid_bin(cmd: &dyn CommandRunner) -> Result<String, PrivError> {
     cmd.which("waydroid").map(|p| p.to_string_lossy().into_owned()).ok_or(PrivError::Missing("Waydroid"))
 }
 
-fn regenerate_props(fs: &HostFs, cmd: &dyn CommandRunner, log: &mut String) -> Result<(), PrivError> {
+pub(crate) fn regenerate_props(fs: &HostFs, cmd: &dyn CommandRunner, log: &mut String) -> Result<(), PrivError> {
     let _ = fs;
     step(cmd, log, &waydroid_bin(cmd)?, &["upgrade", "-o"], Duration::from_secs(300))?;
     let active = cmd.run("systemctl", &["is-active", CONTAINER_UNIT]).map(|o| o.stdout.trim() == "active").unwrap_or(false);
@@ -282,6 +282,7 @@ fn switch_system_image_with(target: SystemType, fs: &HostFs, cmd: &dyn CommandRu
             "waydroid-nvidia: re-activating {mode} mode after the image switch\n"
         ));
         step(cmd, &mut log, SETUP_BIN, &["--mode", mode], Duration::from_secs(1800))?;
+        crate::nvidia_stack::apply_subsurface_policy(fs, cmd, &mut log)?;
     } else {
         step(cmd, &mut log, "systemctl", &["start", CONTAINER_UNIT], Duration::from_secs(120))?;
     }

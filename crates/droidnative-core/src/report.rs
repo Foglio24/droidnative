@@ -386,6 +386,20 @@ fn runtime_checks(r: &HostReport) -> Vec<Check> {
             tr!("nessun blocco del firewall rilevato; l'indirizzo compare al primo avvio", "no firewall block detected; the address appears on first start"),
         ),
     });
+    if w.nvidia_setup.is_some() && w.subsurface == Some(true) && !crate::nvidia_stack::kwin_compositor(r.session.compositor.as_deref()) {
+        let comp = r.session.compositor.clone().unwrap_or_else(|| "?".into());
+        c.push(
+            Check::warn(
+                "subsurface",
+                tr!("Composizione di waydroid-nvidia", "waydroid-nvidia composition"),
+                tr!(
+                    "subsurface diretto attivo con {comp}: è testato solo su KWin e qui può far cadere Android e lasciare scie (waydroid-nvidia #21)",
+                    "direct subsurface on with {comp}: it is tested on KWin only and here it can bring Android down and leave trails (waydroid-nvidia #21)"
+                ),
+            )
+            .remedy(tr!("Installazione guidata → «Configurare il backend GPU»", "Guided setup → “Set up the GPU backend”")),
+        );
+    }
     if w.initialized {
         let google = tr!("Servizi Google", "Google services");
         c.push(match w.system_image {

@@ -188,7 +188,20 @@ pub fn plan(host: &HostReport, gpu: &GpuPlan) -> Vec<SetupStep> {
         (kind @ (GpuBackendKind::NvidiaAccelerated | GpuBackendKind::NvidiaExperimental), Some(a)) => {
             let want = if kind == GpuBackendKind::NvidiaAccelerated { NvidiaMode::Venus } else { NvidiaMode::Prolapse };
             let release = crate::nvidia_stack::latest_release();
+            let compositor = host.session.compositor.as_deref();
+            let subsurface_risk = w.subsurface == Some(true) && !crate::nvidia_stack::kwin_compositor(compositor);
             let (state, detail, op) = match (w.nvidia_setup.is_some(), w.nvidia_mode) {
+                (true, Some(m)) if m == want && subsurface_risk => {
+                    let comp = compositor.unwrap_or("?");
+                    (
+                        StepState::Pending,
+                        tr!(
+                            "waydroid-nvidia usa il subsurface diretto, testato solo su KWin: con {comp} può far cadere Android e lasciare scie sullo schermo. Va disattivato",
+                            "waydroid-nvidia uses the direct subsurface, tested on KWin only: with {comp} it can bring Android down and leave trails on the screen. It should be turned off"
+                        ),
+                        Some(PrivilegedOp::SetSubsurface { enabled: false }),
+                    )
+                }
                 (true, Some(m)) if m == want => {
                     let mode = m.as_arg();
                     (

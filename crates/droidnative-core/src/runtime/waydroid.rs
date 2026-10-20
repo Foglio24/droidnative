@@ -95,6 +95,8 @@ pub struct WaydroidInstall {
     pub arm_translator: Option<crate::extras::Translator>,
     /// venus mode with drm_device on another GPU's node: waydroid-nvidia refuses to start the container.
     pub stale_render_node: Option<crate::nvidia_stack::StaleRenderNode>,
+    /// waydroid-nvidia's `persist.waydroid.use_subsurface` in waydroid.cfg.
+    pub subsurface: Option<bool>,
 }
 
 pub fn parse_config(text: &str) -> WaydroidConfig {
@@ -182,6 +184,7 @@ pub fn detect_install(probe: &Probe) -> WaydroidInstall {
         arm_translation: config_text.as_deref().map(|t| crate::extras::arm_translation_installed(fs, t)).unwrap_or(false),
         arm_translator: config_text.as_deref().and_then(|t| crate::extras::arm_translator(fs, t)),
         stale_render_node: config_text.as_deref().and_then(|t| crate::nvidia_stack::stale_render_node(fs, t)),
+        subsurface: config_text.as_deref().and_then(crate::nvidia_stack::subsurface_enabled),
     }
 }
 

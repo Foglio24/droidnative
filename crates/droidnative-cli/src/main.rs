@@ -223,6 +223,10 @@ enum PrivCommand {
     },
     RemoveArmTranslation,
     GoogleDeviceId,
+    SetSubsurface {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Runs as root from droidnative-render-node.service before every container start.
     RepinRenderNode {
         #[arg(long)]
@@ -293,6 +297,7 @@ impl PrivCommand {
             Self::RemoveArmTranslation => PrivilegedOp::RemoveArmTranslation,
             Self::GoogleDeviceId => PrivilegedOp::GoogleDeviceId,
             Self::RepinRenderNode { start } => PrivilegedOp::RepinRenderNode { start_container: start },
+            Self::SetSubsurface { state } => PrivilegedOp::SetSubsurface { enabled: matches!(state, OnOff::On) },
         }
     }
 }
@@ -544,6 +549,12 @@ fn run(cli: Cli) -> Result<(), String> {
                     WindowModeArg::Single => WindowMode::Single,
                     WindowModeArg::Multi => WindowMode::Multi,
                 };
+                if m == WindowMode::Multi {
+                    let host = probe_local();
+                    if let Some(why) = droidnative_core::nvidia_stack::per_app_windows_refusal(host.waydroid.nvidia_setup.is_some(), host.session.compositor.as_deref()) {
+                        return Err(why);
+                    }
+                }
                 rt.set_window_mode(m).map_err(|x| e(&x))?;
             }
             println!(

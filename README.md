@@ -21,8 +21,9 @@ DroidNative is a desktop application (Tauri 2 + React, Rust backend) that:
   keeping apps and data, and guides the device registration with Google;
 - installs **ARM translation** (libndk or libhoudini), so apps and games shipped only for ARM
   processors run too;
-- lets each app get **its own resizable desktop window**, and turns mouse clicks into
-  **touch** for the games that ignore the mouse.
+- turns mouse clicks into **touch** for the games that ignore the mouse, and lets each app
+  get its own desktop window where the graphics stack supports it (see
+  [Windows and mouse](#windows-and-mouse)).
 
 Material 3 interface (system light and dark theme). Language: Italian when the session is in
 Italian (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), English in every other case — for the
@@ -42,13 +43,13 @@ Kali, KDE Neon…), a Wayland session, a kernel with binder (distribution kernel
    ```
 
    ```bash
-   gh attestation verify droidnative_0.4.0_amd64.deb --repo Foglio24/droidnative
+   gh attestation verify droidnative_0.4.1_amd64.deb --repo Foglio24/droidnative
    ```
 
 3. Install it, from a terminal in the folder where you downloaded the file:
 
    ```bash
-   sudo apt install ./droidnative_0.4.0_amd64.deb
+   sudo apt install ./droidnative_0.4.1_amd64.deb
    ```
 
 4. Open **DroidNative** from the applications menu and follow **Setup**.
@@ -69,10 +70,16 @@ applications menu. From a terminal: `droidnative app install file.apk`.
 
 - **Windows** (on the Android apps page): *One window* keeps Android in a single desktop
   window with the apps inside it; *A window per app* gives every app its own desktop window
-  (Android's PC mode with freeform windows), resizable by dragging its edges. Dragging a
-  window by Android's own title bar can stutter, because Android moves it inside its screen
-  while the desktop places the window: hold the Super key and drag to let the desktop move it.
-  Changing the mode restarts Android. From a terminal: `droidnative windows single|multi`.
+  (Android's PC mode with freeform windows). Changing the mode restarts Android. From a
+  terminal: `droidnative windows single|multi`.
+  - With **waydroid-nvidia on GNOME** (or any compositor other than KDE's KWin, the only one
+    upstream tests), *A window per app* is not available: moving a window leaves trails of it
+    over the whole screen, and Android's keyboard pops up as a separate window that takes the
+    focus. DroidNative disables the option there.
+  - On GNOME the Android window has **no title bar or borders**: GNOME draws none for Wayland
+    apps that do not draw their own, and Waydroid's display component does not draw one. The
+    window stays maximized. Running it inside gamescope gives it a title bar, but Android keeps
+    a fixed resolution scaled into the window (black bands), so DroidNative does not do it.
 - **Mouse as touch** (the hand icon next to each app): many games, Unity ones in particular,
   react only to touch and ignore mouse clicks. With this on, Android delivers the app's clicks
   and drags as touches. It applies the next time the app opens; Android limits the list to 91
@@ -130,7 +137,10 @@ source commit), verifies every file before running the official installer and re
 distribution's `waydroid` package with the patched build; Android images and data stay.
 Before every container start, `droidnative-render-node.service` checks again which
 `/dev/dri/renderD*` is the NVIDIA GPU: on PCs with two GPUs the number can change at every
-boot. Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+boot. On desktops other than KDE, DroidNative also turns off waydroid-nvidia's direct
+subsurface (`persist.waydroid.use_subsurface`), which `waydroid-nvidia-setup` turns back on at
+every run: SurfaceFlinger then composes on the NVIDIA GPU and the desktop gets one image per
+window, acceleration included. Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Command line
 
@@ -174,7 +184,9 @@ AnduinOS 2.0.4 (Ubuntu 26.04), GNOME/Mutter on Wayland:
 | GAPPS image: Play Store and Google Play Services, NVIDIA acceleration kept | ✅ GMS 23.10.15, device ID read |
 | ARM translation: ARM-only VLC (`armeabi-v7a` and `arm64-v8a`) with libndk | ✅ native libraries loaded through `libndk_translation.so`; removal and reinstall verified |
 | ARM translation: Age of Empires Mobile (ARM64 only, Tencent ACE) | ❌ with libndk (abort in the translator), ✅ with libhoudini |
-| A window per app (freeform), resizing | ✅; moving by Android's title bar stutters |
+| waydroid-nvidia's direct subsurface on GNOME/Mutter | ❌ composer abort and trails (upstream #21): DroidNative turns it off after every waydroid-nvidia setup |
+| A window per app with waydroid-nvidia on GNOME/Mutter | ❌ trails over the whole desktop, keyboard as a separate window: disabled |
+| Resizing the single Android window on GNOME | ❌ no title bar or borders from GNOME; with gamescope a bar but a scaled, fixed-resolution Android |
 | Clipboard, notifications, file sharing, nested X11 | not implemented yet |
 
 Real problems found and handled: [docs/RESEARCH.md](docs/RESEARCH.md#end-to-end-checks-on-the-development-pc).
